@@ -1,0 +1,20 @@
+[package]
+name = "my-grades"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "my_grades_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.5.5", features = [] }
+
+[dependencies]
+reqwest = { version = "0.13.2", features = ["cookies", "form", "json", "query"] }
+scraper = "0.25.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+tauri = { version = "2.10.2", features = [] }
+tauri-plugin-shell = "2.3.5"
+url = "2.5.8"
