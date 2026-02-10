@@ -85,6 +85,73 @@ function isFailed(g: GradeRecord): boolean {
   return s.includes("FAIL") || s.includes("ΑΠΟΤ") || (v !== null && v < 5);
 }
 
+/**
+ * Best-effort chronological sort key for an exam attempt.
+ * Tries (1) explicit attempt number, (2) date-like fields, (3) exam period text.
+ * Falls back to the original array index so we always keep a deterministic order.
+ */
+function attemptSortKey(
+  g: GradeRecord,
+  fallbackIndex: number
+): number {
+  // 1) Explicit attempt number if the API provides one
+  const attemptNo =
+    (g as any).attemptNo ??
+    (g as any).attempt_no ??
+    (g as any).attempt ??
+    (g as any).try ??
+    (g as any).examAttempt;
+  if (typeof attemptNo === "number" && Number.isFinite(attemptNo)) {
+    return attemptNo;
+  }
+
+  // 2) Date-like fields (ISO strings, timestamps, etc.)
+  const dateFields = [
+    "examDate",
+    "exam_date",
+    "date",
+    "gradeDate",
+    "createdAt",
+    "updatedAt",
+  ];
+  for (const field of dateFields) {
+    const v = (g as any)[field];
+    if (typeof v === "string") {
+      const t = Date.parse(v);
+      if (!Number.isNaN(t)) return t;
+    }
+    if (typeof v === "number" && Number.isFinite(v)) {
+      return v;
+    }
+  }
+
+  // 3) Exam period text like "FEB 2026", "Χειμερινό 2023-24", etc.
+  const periodRaw = gradeExamPeriod(g);
+  if (periodRaw) {
+    const text = String(periodRaw).toLowerCase();
+
+    // Academic year (pick the latest 4‑digit year we see)
+    const yearMatches = text.match(/\b(19|20)\d{2}\b/g);
+    const year = yearMatches && yearMatches.length
+      ? parseInt(yearMatches[yearMatches.length - 1]!, 10)
+      : Number.NaN;
+
+    // Within the academic year, roughly order winter < spring < september
+    let term = 1;
+    if (/(χειμ|winter|win|feb|january|ιαν|φεβ)/i.test(text)) term = 0;
+    else if (/(εαρ|spring|jun|june|may|μαΐ|ιουν)/i.test(text)) term = 1;
+    else if (/(σεπ|sept|sep|autumn|fall|oct|nov)/i.test(text)) term = 2;
+
+    if (!Number.isNaN(year)) {
+      // Multiply to keep terms in order inside the same year
+      return year * 10 + term;
+    }
+  }
+
+  // 4) Fallback: preserve the original relative order
+  return 1_000_000_000 + fallbackIndex;
+}
+
 function semesterLabel(n: number): string {
   if (n === 0) return "Other";
   const ordinal = ["1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th"];
@@ -100,6 +167,12 @@ function buildSemesters(grades: GradeRecord[]): {
   avg: string;
   best: CourseGroup | null;
 } {
+  // Remember original order so sorting can fall back to it
+  const indexMap = new Map<GradeRecord, number>();
+  grades.forEach((g, idx) => {
+    indexMap.set(g, idx);
+  });
+
   const courseMap = new Map<string, GradeRecord[]>();
   for (const g of grades) {
     const key = cKey(g);
@@ -110,13 +183,27 @@ function buildSemesters(grades: GradeRecord[]): {
 
   const allCourses: CourseGroup[] = [];
   for (const [key, rawAttempts] of courseMap) {
-    // Keep original API order (oldest → newest)
-    const attempts = rawAttempts;
+    // Sort attempts from oldest → newest.
+    // Business rule: any passing attempt (grade ≥ 5 / non‑fail status)
+    // must be the last real try, so all failing attempts come first.
+    const attempts = [...rawAttempts].sort((a, b) => {
+      const aFailed = isFailed(a);
+      const bFailed = isFailed(b);
+      if (aFailed !== bFailed) {
+        // failed (true) should come before passed (false)
+        return aFailed ? -1 : 1;
+      }
 
-    // If the course is passed, the passing attempt is always the last one.
-    const last = attempts[attempts.length - 1];
-    const hasPassed = !isFailed(last);
-    const current = last;
+      const aKey = attemptSortKey(a, indexMap.get(a) ?? 0);
+      const bKey = attemptSortKey(b, indexMap.get(b) ?? 0);
+      if (aKey === bKey) {
+        return (indexMap.get(a) ?? 0) - (indexMap.get(b) ?? 0);
+      }
+      return aKey - bKey;
+    });
+
+    const current = attempts[attempts.length - 1];
+    const hasPassed = !isFailed(current);
 
     allCourses.push({
       key,
