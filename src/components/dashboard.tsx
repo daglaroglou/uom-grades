@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ChevronDown, Settings, Moon, Sun } from "lucide-react";
-import { getGrades, logout as tauriLogout } from "@/lib/tauri";
+import { ChevronDown, Settings, Moon, Sun, PanelRightClose } from "lucide-react";
+import { getGrades, logout as tauriLogout, getKeepInTray, setKeepInTray } from "@/lib/tauri";
 import { useTheme } from "@/components/theme-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -261,6 +261,7 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [keepInTray, setKeepInTrayState] = useState(false);
   const { theme, toggle: toggleTheme } = useTheme();
 
   useEffect(() => {
@@ -269,6 +270,15 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
+
+  useEffect(() => {
+    getKeepInTray().then(setKeepInTrayState);
+  }, []);
+
+  async function handleKeepInTrayChange(checked: boolean) {
+    setKeepInTrayState(checked);
+    await setKeepInTray(checked);
+  }
 
   const { semesters, passedCourses, passedEcts, avg, best } = useMemo(
     () => buildSemesters(grades),
@@ -353,22 +363,34 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
                       animate={{ opacity: 1, y: 0, scale: 1 }}
                       exit={{ opacity: 0, y: -4, scale: 0.95 }}
                       transition={{ duration: 0.15 }}
-                      className="absolute right-0 top-10 z-50 w-56 rounded-lg border bg-popover p-4 shadow-lg"
+                      className="absolute right-0 top-10 z-50 w-64 rounded-lg border bg-popover p-4 shadow-lg"
                     >
                       <p className="text-sm font-semibold mb-3">Settings</p>
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2 text-sm">
-                          {theme === "dark" ? (
-                            <Moon className="h-4 w-4" />
-                          ) : (
-                            <Sun className="h-4 w-4" />
-                          )}
-                          <span>Dark Mode</span>
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 text-sm">
+                            {theme === "dark" ? (
+                              <Moon className="h-4 w-4" />
+                            ) : (
+                              <Sun className="h-4 w-4" />
+                            )}
+                            <span>Dark Mode</span>
+                          </div>
+                          <Switch
+                            checked={theme === "dark"}
+                            onCheckedChange={toggleTheme}
+                          />
                         </div>
-                        <Switch
-                          checked={theme === "dark"}
-                          onCheckedChange={toggleTheme}
-                        />
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 text-sm">
+                            <PanelRightClose className="h-4 w-4" />
+                            <span>Keep in tray when closed</span>
+                          </div>
+                          <Switch
+                            checked={keepInTray}
+                            onCheckedChange={handleKeepInTrayChange}
+                          />
+                        </div>
                       </div>
                     </motion.div>
                   </>

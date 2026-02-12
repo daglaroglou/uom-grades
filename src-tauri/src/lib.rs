@@ -6,7 +6,10 @@ use reqwest::Client;
 use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::Manager;
+use tauri::WindowEvent;
 use url::Url;
 
 const SSO_URL: &str = "https://sso.uom.gr/login";
@@ -22,8 +25,14 @@ struct SessionData {
     profile_id: String,
 }
 
+#[derive(Clone, Default, Serialize, Deserialize)]
+pub struct AppSettings {
+    pub keep_in_tray: bool,
+}
+
 pub struct AppState {
     session: Mutex<Option<SessionData>>,
+    settings: Mutex<AppSettings>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -90,6 +99,31 @@ fn find_profile_id(value: &Value) -> Option<String> {
 fn session_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     Ok(dir.join("session.json"))
+}
+
+fn settings_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    Ok(dir.join("settings.json"))
+}
+
+fn load_settings(app: &tauri::AppHandle) -> AppSettings {
+    let path = match settings_path(app) {
+        Ok(p) => p,
+        Err(_) => return AppSettings::default(),
+    };
+    let data = match std::fs::read_to_string(&path) {
+        Ok(d) => d,
+        Err(_) => return AppSettings::default(),
+    };
+    serde_json::from_str(&data).unwrap_or_default()
+}
+
+fn save_settings(app: &tauri::AppHandle, settings: &AppSettings) -> Result<(), String> {
+    let path = settings_path(app)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&path, serde_json::to_string(settings).unwrap()).map_err(|e| e.to_string())
 }
 
 fn save_session_to_disk(
@@ -338,6 +372,25 @@ async fn get_grades(app: tauri::AppHandle) -> Result<Value, String> {
     api_get(&client, "/feign/student/grades/all", &csrf, &pid).await
 }
 
+// ── Command: get_keep_in_tray ───────────────────────────────────────
+
+#[tauri::command]
+fn get_keep_in_tray(app: tauri::AppHandle) -> Result<bool, String> {
+    let state = app.state::<AppState>();
+    let guard = state.settings.lock().map_err(|e| e.to_string())?;
+    Ok(guard.keep_in_tray)
+}
+
+// ── Command: set_keep_in_tray ───────────────────────────────────────
+
+#[tauri::command]
+fn set_keep_in_tray(app: tauri::AppHandle, value: bool) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let mut guard = state.settings.lock().map_err(|e| e.to_string())?;
+    guard.keep_in_tray = value;
+    save_settings(&app, &*guard)
+}
+
 // ── Command: logout ─────────────────────────────────────────────────
 
 #[tauri::command]
@@ -356,6 +409,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(AppState {
             session: Mutex::new(None),
+            settings: Mutex::new(AppSettings::default()),
         })
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
@@ -363,8 +417,75 @@ pub fn run() {
             login,
             get_student_info,
             get_grades,
-            logout
+            logout,
+            get_keep_in_tray,
+            set_keep_in_tray
         ])
+        .setup(|app| {
+            // Load settings from disk
+            let settings = load_settings(&app.handle());
+            let state = app.state::<AppState>();
+            let mut guard = state.settings.lock().unwrap();
+            *guard = settings;
+
+            // Build tray with Show and Quit menu items
+            let show_i = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
+            let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
+
+            let mut tray_builder = TrayIconBuilder::new()
+                .menu(&menu)
+                .show_menu_on_left_click(false)
+                .on_menu_event(move |app, event| {
+                    match event.id.as_ref() {
+                        "show" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                        "quit" => {
+                            app.exit(0);
+                        }
+                        _ => {}
+                    }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                });
+
+            if let Some(icon) = app.default_window_icon() {
+                tray_builder = tray_builder.icon(icon.clone());
+            }
+            tray_builder.build(app)?;
+
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                let app = window.app_handle();
+                let state = app.state::<AppState>();
+                let guard = state.settings.lock();
+                if let Ok(guard) = guard {
+                    if guard.keep_in_tray {
+                        let _ = window.hide();
+                        api.prevent_close();
+                        return;
+                    }
+                }
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

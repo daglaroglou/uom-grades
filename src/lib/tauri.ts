@@ -88,3 +88,16 @@ export async function logout(): Promise<void> {
     await invoke("logout");
   }
 }
+
+// ── Settings ───────────────────────────────────────────────────────
+
+export async function getKeepInTray(): Promise<boolean> {
+  if (!isTauri()) return false;
+  return invoke<boolean>("get_keep_in_tray");
+}
+
+export async function setKeepInTray(value: boolean): Promise<void> {
+  if (isTauri()) {
+    await invoke("set_keep_in_tray", { value });
+  }
+}
