@@ -1,10 +1,12 @@
 name: Build & Release
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. v1.0.0)"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -60,10 +62,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: My Grades ${{ github.ref_name }}
+          tagName: ${{ github.event.inputs.version }}
+          releaseName: My Grades - v${{ github.event.inputs.version }}
           releaseBody: See the assets below to download the installer for your platform.
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           generateReleaseNotes: true
           args: ${{ matrix.args }}
