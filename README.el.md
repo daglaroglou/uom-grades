@@ -1,6 +1,6 @@
 <div align="center">
 
-[English](README.md) - Greek
+[English](README.md) - Ελληνικά
 
 # 🎓 UoM Grades
 
