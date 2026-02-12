@@ -2,12 +2,21 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { ChevronDown, Settings, Moon, Sun, PanelRightClose } from "lucide-react";
+import { HugeiconsIcon } from "@hugeicons/react";
+import {
+  ArrowDown01Icon,
+  Settings01Icon,
+  Moon01Icon,
+  Sun01Icon,
+  PanelRightCloseIcon,
+  GraduationScrollIcon,
+} from "@hugeicons/core-free-icons";
 import { getGrades, logout as tauriLogout, getKeepInTray, setKeepInTray } from "@/lib/tauri";
+import { CourseStatsPanel } from "@/components/course-stats-panel";
 import { useTheme } from "@/components/theme-provider";
+import { useLocale } from "@/components/locale-provider";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import type { StudentInfo, GradeRecord } from "@/types";
@@ -24,6 +33,8 @@ import {
   gradeStatus,
   gradeExamPeriod,
   courseSemester,
+  courseSyllabusId,
+  examPeriodId,
 } from "@/types";
 
 const ECTS_TARGET = 240;
@@ -42,7 +53,6 @@ interface CourseGroup {
 
 interface SemesterSection {
   semester: number;
-  label: string;
   courses: CourseGroup[];
 }
 
@@ -64,15 +74,6 @@ function gradeColor(score: number | null, failed: boolean): string {
   if (score >= 5)
     return "bg-amber-100 text-amber-800 hover:bg-amber-100 dark:bg-amber-950 dark:text-amber-300";
   return "bg-red-100 text-red-800 hover:bg-red-100 dark:bg-red-950 dark:text-red-300";
-}
-
-function gradeLabel(score: number | null, failed: boolean): string {
-  if (failed) return "Fail";
-  if (score === null) return "—";
-  if (score >= 8.5) return "Excellent";
-  if (score >= 6.5) return "Very Good";
-  if (score >= 5) return "Good";
-  return "Fail";
 }
 
 function cKey(g: GradeRecord): string {
@@ -152,11 +153,6 @@ function attemptSortKey(
   return 1_000_000_000 + fallbackIndex;
 }
 
-function semesterLabel(n: number): string {
-  if (n === 0) return "Other";
-  const ordinal = ["1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th"];
-  return `${ordinal[n - 1] ?? `${n}th`} Semester`;
-}
 
 // ── Build grouped data ──────────────────────────────────────────────
 
@@ -228,7 +224,6 @@ function buildSemesters(grades: GradeRecord[]): {
     .sort(([a], [b]) => a - b)
     .map(([sem, courses]) => ({
       semester: sem,
-      label: semesterLabel(sem),
       courses,
     }));
 
@@ -262,7 +257,15 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [keepInTray, setKeepInTrayState] = useState(false);
+  const [statsExpanded, setStatsExpanded] = useState<Set<string>>(new Set());
   const { theme, toggle: toggleTheme } = useTheme();
+  const { t, locale, setLocale } = useLocale();
+
+  function semesterLabel(sem: number): string {
+    if (sem === 0) return t("semesterOther");
+    const ordKey = `ordinal${Math.min(sem, 8)}` as const;
+    return t("semesterFormat", { ordinal: t(ordKey) });
+  }
 
   useEffect(() => {
     getGrades()
@@ -304,6 +307,15 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
     });
   }
 
+  function toggleStats(key: string) {
+    setStatsExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
   async function handleLogout() {
     await tauriLogout();
     onLogout();
@@ -315,22 +327,28 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
       animate={{ opacity: 1 }}
       exit={{ opacity: 0, y: -20 }}
       transition={{ duration: 0.3 }}
-      className="min-h-screen bg-background"
+      className="page-bg min-h-screen bg-background"
     >
       {/* ── Header ─────────────────────────────────────────────── */}
-      <header className="border-b">
+      <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
-          <div className="flex items-center gap-3">
-            <span className="text-2xl">🎓</span>
-            <div>
-              <h1 className="text-lg font-semibold">{name}</h1>
-              <p className="text-sm text-muted-foreground">
+          <div className="flex items-center gap-4">
+            <div className="rounded-xl bg-primary/10 p-2.5 ring-1 ring-primary/10 dark:ring-primary/20">
+              <HugeiconsIcon
+                icon={GraduationScrollIcon}
+                size={28}
+                className="text-primary shrink-0"
+              />
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-lg font-bold tracking-tight truncate">{name}</h1>
+              <p className="text-sm text-muted-foreground truncate">
                 {sid}
                 {statusText ? ` · ${statusText}` : ""}
                 {sem ? ` · ${sem}` : ""}
               </p>
               {dept && (
-                <p className="text-xs text-muted-foreground truncate max-w-md">
+                <p className="text-xs text-muted-foreground truncate max-w-md mt-0.5">
                   {dept}
                 </p>
               )}
@@ -344,9 +362,9 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
                 variant="ghost"
                 size="icon"
                 onClick={() => setSettingsOpen((v) => !v)}
-                aria-label="Settings"
+                aria-label={t("settings")}
               >
-                <Settings className="h-4 w-4" />
+                <HugeiconsIcon icon={Settings01Icon} size={16} />
               </Button>
 
               {/* Settings dropdown */}
@@ -359,22 +377,53 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
                       onClick={() => setSettingsOpen(false)}
                     />
                     <motion.div
-                      initial={{ opacity: 0, y: -4, scale: 0.95 }}
+                      initial={{ opacity: 0, y: -4, scale: 0.96 }}
                       animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: -4, scale: 0.95 }}
+                      exit={{ opacity: 0, y: -4, scale: 0.96 }}
                       transition={{ duration: 0.15 }}
-                      className="absolute right-0 top-10 z-50 w-64 rounded-lg border bg-popover p-4 shadow-lg"
+                      className="absolute right-0 top-10 z-50 w-64 rounded-xl border bg-popover p-4 shadow-xl shadow-black/10 dark:shadow-black/30 ring-1 ring-border/50"
                     >
-                      <p className="text-sm font-semibold mb-3">Settings</p>
+                      <p className="text-sm font-semibold mb-3">{t("settings")}</p>
                       <div className="space-y-3">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2 text-sm">
+                            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                              {t("language")}
+                            </span>
+                          </div>
+                          <div className="flex gap-1">
+                            <button
+                              type="button"
+                              onClick={() => setLocale("en")}
+                              className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                                locale === "en"
+                                  ? "bg-primary text-primary-foreground"
+                                  : "bg-muted hover:bg-muted/80"
+                              }`}
+                            >
+                              EN
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setLocale("el")}
+                              className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
+                                locale === "el"
+                                  ? "bg-primary text-primary-foreground"
+                                  : "bg-muted hover:bg-muted/80"
+                              }`}
+                            >
+                              ΕΛ
+                            </button>
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 text-sm">
                             {theme === "dark" ? (
-                              <Moon className="h-4 w-4" />
+                              <HugeiconsIcon icon={Moon01Icon} size={16} />
                             ) : (
-                              <Sun className="h-4 w-4" />
+                              <HugeiconsIcon icon={Sun01Icon} size={16} />
                             )}
-                            <span>Dark Mode</span>
+                            <span>{t("darkMode")}</span>
                           </div>
                           <Switch
                             checked={theme === "dark"}
@@ -383,8 +432,8 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
                         </div>
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2 text-sm">
-                            <PanelRightClose className="h-4 w-4" />
-                            <span>Keep in tray when closed</span>
+                            <HugeiconsIcon icon={PanelRightCloseIcon} size={16} />
+                            <span>{t("keepInTray")}</span>
                           </div>
                           <Switch
                             checked={keepInTray}
@@ -398,8 +447,8 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
               </AnimatePresence>
             </div>
 
-            <Button variant="outline" size="sm" onClick={handleLogout}>
-              Sign Out
+            <Button variant="outline" size="sm" onClick={handleLogout} className="rounded-lg">
+              {t("signOut")}
             </Button>
           </div>
         </div>
@@ -410,21 +459,21 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           {[
             {
-              label: "Average",
-              content: <p className="text-3xl font-bold">{avg}</p>,
+              label: t("average"),
+              content: <p className="text-3xl font-bold tabular-nums tracking-tight">{avg}</p>,
             },
             {
-              label: "ECTS Progress",
+              label: t("ectsProgress"),
               content: (
                 <>
-                  <p className="text-3xl font-bold">
+                  <p className="text-3xl font-bold tracking-tight">
                     {passedEcts}
                     <span className="text-lg font-normal text-muted-foreground">
                       {" "}
                       / {ECTS_TARGET}
                     </span>
                   </p>
-                  <div className="mt-2 h-2 rounded-full bg-muted overflow-hidden">
+                  <div className="mt-2.5 h-2.5 rounded-full bg-muted overflow-hidden">
                     <motion.div
                       className="h-full rounded-full bg-primary"
                       initial={{ width: 0 }}
@@ -440,20 +489,20 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
               ),
             },
             {
-              label: "Passed Courses",
+              label: t("passedCourses"),
               content: (
-                <p className="text-3xl font-bold">{passedCourses.length}</p>
+                <p className="text-3xl font-bold tabular-nums tracking-tight">{passedCourses.length}</p>
               ),
             },
             {
-              label: "Best Grade",
+              label: t("bestGrade"),
               content: (
                 <>
-                  <p className="text-3xl font-bold">
+                  <p className="text-3xl font-bold tracking-tight">
                     {best ? gradeValue(best.current) : "—"}
                   </p>
                   {best && (
-                    <p className="text-sm text-muted-foreground truncate">
+                    <p className="text-sm text-muted-foreground truncate mt-1">
                       {best.name}
                     </p>
                   )}
@@ -463,18 +512,18 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
           ].map((card, i) => (
             <motion.div
               key={card.label}
-              initial={{ opacity: 0, y: 20 }}
+              initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.1 + i * 0.08 }}
+              transition={{ delay: 0.1 + i * 0.08, ease: "easeOut" }}
               className="flex"
             >
-              <Card className="flex flex-col w-full">
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">
+              <Card className="flex flex-col w-full overflow-hidden border-0 shadow-md shadow-black/5 dark:shadow-black/15 ring-1 ring-border/50 hover:ring-border/70 transition-shadow">
+                <CardHeader className="pb-2 pt-5">
+                  <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
                     {card.label}
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="flex-1 flex flex-col justify-center">
+                <CardContent className="flex-1 flex flex-col justify-center pb-5">
                   {card.content}
                 </CardContent>
               </Card>
@@ -484,9 +533,32 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
 
         {/* ── Semesters ────────────────────────────────────────── */}
         {loading ? (
-          <p className="text-muted-foreground">Loading grades...</p>
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="flex flex-col items-center justify-center py-16 gap-4"
+          >
+            <div className="h-8 w-8 rounded-full border-2 border-primary/30 border-t-primary animate-spin" />
+            <p className="text-sm text-muted-foreground">{t("loadingGrades")}</p>
+            <div className="flex gap-1">
+              {[0, 1, 2].map((i) => (
+                <motion.div
+                  key={i}
+                  className="h-1.5 w-1.5 rounded-full bg-primary/40"
+                  animate={{ opacity: [0.4, 1, 0.4] }}
+                  transition={{ duration: 1.2, repeat: Infinity, delay: i * 0.2 }}
+                />
+              ))}
+            </div>
+          </motion.div>
         ) : grades.length === 0 ? (
-          <p className="text-muted-foreground">No grades found.</p>
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="rounded-xl border border-dashed border-border bg-muted/30 px-8 py-12 text-center"
+          >
+            <p className="text-muted-foreground">{t("noGradesFound")}</p>
+          </motion.div>
         ) : (
           <div className="space-y-8">
             {semesters.map((section, si) => (
@@ -500,18 +572,28 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
                 <div className="flex items-center gap-4 mb-4">
                   <Separator className="flex-1" />
                   <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
-                    {section.label}
+                    {semesterLabel(section.semester)}
                   </h2>
                   <Separator className="flex-1" />
                 </div>
 
-                <Card>
+                <Card className="overflow-hidden border-0 shadow-md shadow-black/5 dark:shadow-black/15 ring-1 ring-border/50">
+                  {/* Table headers */}
+                  <div className="hidden sm:grid grid-cols-[1fr_80px_80px] items-center gap-3 px-4 py-3.5 text-xs font-medium uppercase tracking-wider text-muted-foreground border-b bg-muted/40">
+                    <span>{t("course")}</span>
+                    <span className="text-right">{t("grade")}</span>
+                    <span className="text-right">{t("ects")}</span>
+                  </div>
                   <div className="divide-y">
                     {section.courses.map((course) => {
                       const hasHistory = course.attempts.length > 1;
                       const isOpen = expanded.has(course.key);
                       const score = gradeValue(course.current);
                       const failed = !course.passed;
+                      const csId = courseSyllabusId(course.current);
+                      const epId = examPeriodId(course.current);
+                      const hasStats = Boolean(csId && epId);
+                      const showStats = statsExpanded.has(course.key);
 
                       return (
                         <div key={course.key}>
@@ -520,7 +602,7 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
                             type="button"
                             onClick={() => hasHistory && toggleCourse(course.key)}
                             disabled={!hasHistory}
-                            className={`w-full grid grid-cols-[1fr_auto_auto_auto_auto] sm:grid-cols-[1fr_80px_70px_80px_100px] items-center gap-3 px-4 py-3 text-left text-sm transition-colors ${
+                            className={`w-full grid grid-cols-[1fr_auto_auto] sm:grid-cols-[1fr_80px_80px] items-center gap-3 px-4 py-3.5 text-left text-sm transition-colors ${
                               hasHistory
                                 ? "cursor-pointer hover:bg-muted/50"
                                 : "cursor-default"
@@ -528,8 +610,10 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
                           >
                             <div className="flex items-center gap-2 min-w-0">
                               {hasHistory ? (
-                                <ChevronDown
-                                  className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 ${
+                                <HugeiconsIcon
+                                  icon={ArrowDown01Icon}
+                                  size={16}
+                                  className={`shrink-0 text-muted-foreground transition-transform duration-200 ${
                                     isOpen ? "rotate-0" : "-rotate-90"
                                   }`}
                                 />
@@ -543,33 +627,59 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
                                 <p className="text-xs text-muted-foreground">
                                   {course.code}
                                   {hasHistory &&
-                                    ` · ${course.attempts.length} attempts`}
+                                    ` · ${t("attemptsCount", { count: course.attempts.length })}`}
                                 </p>
                               </div>
                             </div>
 
-                            <p className="text-right font-semibold tabular-nums">
-                              {score !== null ? score : "—"}
-                            </p>
-
-                            <p className="text-right text-muted-foreground tabular-nums">
-                              {course.ects ?? "—"}
-                              <span className="text-xs ml-0.5">ec</span>
-                            </p>
-
-                            <p className="text-right text-xs text-muted-foreground hidden sm:block truncate">
-                              {gradeExamPeriod(course.current)}
-                            </p>
-
+                            {/* Grade display */}
                             <div className="flex justify-end">
-                              <Badge
-                                variant="secondary"
-                                className={gradeColor(score, failed)}
+                              <span
+                                className={`inline-flex items-center justify-center min-w-[2.25rem] h-9 rounded-md text-base font-bold tabular-nums ${
+                                  failed
+                                    ? "text-red-700 dark:text-red-400 bg-red-500/15 dark:bg-red-500/20"
+                                    : score !== null && score >= 8.5
+                                      ? "text-emerald-700 dark:text-emerald-400 bg-emerald-500/15 dark:bg-emerald-500/20"
+                                      : score !== null && score >= 6.5
+                                        ? "text-blue-700 dark:text-blue-400 bg-blue-500/15 dark:bg-blue-500/20"
+                                        : score !== null && score >= 5
+                                          ? "text-amber-700 dark:text-amber-400 bg-amber-500/15 dark:bg-amber-500/20"
+                                          : "text-muted-foreground bg-muted"
+                                }`}
                               >
-                                {gradeLabel(score, failed)}
-                              </Badge>
+                                {score !== null ? score : "—"}
+                              </span>
                             </div>
+
+                            <p className="text-right text-muted-foreground tabular-nums text-sm">
+                              {course.ects ?? "—"}
+                              <span className="text-xs ml-0.5">{t("ects")}</span>
+                            </p>
                           </button>
+
+                          {/* ── View distribution button ─────── */}
+                          {hasStats && (
+                            <div className="border-t">
+                              <button
+                                type="button"
+                                onClick={() => toggleStats(course.key)}
+                                className="w-full px-4 py-2.5 text-left text-xs font-medium text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors flex items-center gap-2"
+                              >
+                                <span className="text-[10px]">{showStats ? "▼" : "▶"}</span>
+                                {t("gradeDistribution")}
+                              </button>
+                              <AnimatePresence>
+                                {showStats && csId && epId && (
+                                  <CourseStatsPanel
+                                    courseSyllabusId={csId}
+                                    examPeriodId={epId}
+                                    courseName={course.name}
+                                    myGrade={score}
+                                  />
+                                )}
+                              </AnimatePresence>
+                            </div>
+                          )}
 
                           {/* ── Past attempts dropdown ─────── */}
                           <AnimatePresence>
@@ -590,7 +700,7 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
                                     return (
                                       <div
                                         key={ai}
-                                        className={`grid grid-cols-[1fr_auto_auto_auto_auto] sm:grid-cols-[1fr_80px_70px_80px_100px] items-center gap-3 px-4 py-2 text-sm ${
+                                        className={`grid grid-cols-[1fr_auto_auto] sm:grid-cols-[1fr_80px_80px] items-center gap-3 px-4 py-2 text-sm ${
                                           isCurrent
                                             ? "bg-primary/5 font-medium"
                                             : "opacity-50"
@@ -598,28 +708,29 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
                                       >
                                         <p className="pl-6 text-muted-foreground text-xs">
                                           {ai + 1}.{" "}
-                                          {gradeExamPeriod(a) || `Attempt ${ai + 1}`}
+                                          {gradeExamPeriod(a) || t("attemptN", { n: ai + 1 })}
                                           {isCurrent ? " ✓" : ""}
                                         </p>
 
-                                        <p className="text-right tabular-nums">
-                                          {aScore !== null ? aScore : "—"}
-                                        </p>
+                                        <div className="flex justify-end">
+                                          <span
+                                            className={`inline-flex items-center justify-center min-w-[1.75rem] h-7 rounded text-sm font-bold tabular-nums ${
+                                              aFailed
+                                                ? "text-red-700 dark:text-red-400 bg-red-500/15 dark:bg-red-500/20"
+                                                : aScore !== null && aScore >= 8.5
+                                                  ? "text-emerald-700 dark:text-emerald-400 bg-emerald-500/15 dark:bg-emerald-500/20"
+                                                  : aScore !== null && aScore >= 5
+                                                    ? "text-amber-700 dark:text-amber-400 bg-amber-500/15 dark:bg-amber-500/20"
+                                                    : "text-muted-foreground bg-muted"
+                                            }`}
+                                          >
+                                            {aScore !== null ? aScore : "—"}
+                                          </span>
+                                        </div>
 
                                         <p className="text-right text-muted-foreground tabular-nums text-xs">
-                                          {gradeEcts(a) ?? "—"} ec
+                                          {gradeEcts(a) ?? "—"} {t("ects")}
                                         </p>
-
-                                        <div className="hidden sm:block" />
-
-                                        <div className="flex justify-end">
-                                          <Badge
-                                            variant="secondary"
-                                            className={`text-xs ${gradeColor(aScore, aFailed)}`}
-                                          >
-                                            {gradeLabel(aScore, aFailed)}
-                                          </Badge>
-                                        </div>
                                       </div>
                                     );
                                   })}

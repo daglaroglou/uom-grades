@@ -1,10 +1,10 @@
 [package]
-name = "my-grades"
-version = "0.1.0"
+name = "uom-grades"
+version = "0.0.1"
 edition = "2021"
 
 [lib]
-name = "my_grades_lib"
+name = "uom_grades_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
 
 [build-dependencies]

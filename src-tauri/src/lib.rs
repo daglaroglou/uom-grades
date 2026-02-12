@@ -372,6 +372,30 @@ async fn get_grades(app: tauri::AppHandle) -> Result<Value, String> {
     api_get(&client, "/feign/student/grades/all", &csrf, &pid).await
 }
 
+// ── Command: get_grade_stats ────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct GetGradeStatsArgs {
+    #[serde(rename = "courseSyllabusId")]
+    course_syllabus_id: String,
+    #[serde(rename = "examPeriodId")]
+    exam_period_id: String,
+}
+
+#[tauri::command]
+async fn get_grade_stats(
+    app: tauri::AppHandle,
+    args: GetGradeStatsArgs,
+) -> Result<serde_json::Value, String> {
+    let (client, csrf, pid) = extract_session(&app)?;
+    let path = format!(
+        "/feign/student/grades/stats/course_syllabus/{}/exam_period/{}",
+        args.course_syllabus_id,
+        args.exam_period_id
+    );
+    api_get(&client, &path, &csrf, &pid).await
+}
+
 // ── Command: get_keep_in_tray ───────────────────────────────────────
 
 #[tauri::command]
@@ -417,6 +441,7 @@ pub fn run() {
             login,
             get_student_info,
             get_grades,
+            get_grade_stats,
             logout,
             get_keep_in_tray,
             set_keep_in_tray

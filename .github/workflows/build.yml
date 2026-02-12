@@ -63,7 +63,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.event.inputs.version }}
-          releaseName: My Grades - v${{ github.event.inputs.version }}
+          releaseName: UoM Grades - v${{ github.event.inputs.version }}
           releaseBody: See the assets below to download the installer for your platform.
           releaseDraft: false
           prerelease: false

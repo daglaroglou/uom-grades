@@ -1,8 +1,8 @@
 {
-  "name": "my-grades",
-  "version": "0.1.0",
+  "name": "uom-grades",
+  "version": "0.0.1",
   "private": true,
-  "description": "Student grade tracking desktop app — Tauri + Next.js + Tailwind CSS",
+  "description": "Student grade tracking desktop app for University of Macedonia",
   "scripts": {
     "dev:next": "next dev",
     "build:next": "next build",
@@ -10,10 +10,19 @@
     "dev": "tauri dev",
     "build": "tauri build"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "university",
+    "grades",
+    "desktop",
+    "app",
+    "uom",
+    "university of macedonia"
+  ],
+  "author": "Christos Daglaroglou",
+  "license": "MIT",
   "dependencies": {
+    "@hugeicons/core-free-icons": "^3.1.1",
+    "@hugeicons/react": "^1.1.5",
     "@radix-ui/react-label": "^2.1.8",
     "@radix-ui/react-separator": "^1.1.8",
     "@radix-ui/react-slot": "^1.2.4",
@@ -21,11 +30,11 @@
     "@tauri-apps/api": "^2.10.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "lucide-react": "^0.563.0",
     "motion": "^12.34.0",
     "next": "^16.1.6",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
+    "recharts": "^3.7.0",
     "tailwind-merge": "^3.4.0"
   },
   "devDependencies": {

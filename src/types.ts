@@ -76,6 +76,32 @@ export function gradeExamPeriod(g: GradeRecord): string {
   return g.examPeriod ?? g.period ?? g.exam_period ?? "";
 }
 
+/** Extract courseSyllabusId for the stats API (string or object with id) */
+export function courseSyllabusId(g: GradeRecord): string | null {
+  const v =
+    g.courseSyllabusId ??
+    g.course?.courseSyllabusId ??
+    (g.course?.courseSyllabus as { id?: string })?.id ??
+    g.course_syllabus_id;
+  if (typeof v === "string") return v;
+  if (v && typeof v === "object" && typeof (v as { id?: string }).id === "string")
+    return (v as { id: string }).id;
+  return null;
+}
+
+/** Extract examPeriodId for the stats API (string or object with id) */
+export function examPeriodId(g: GradeRecord): string | null {
+  const v =
+    g.examPeriodId ??
+    g.examPeriod?.id ??
+    (g.examPeriod as { id?: string })?.id ??
+    g.exam_period_id;
+  if (typeof v === "string") return v;
+  if (v && typeof v === "object" && typeof (v as { id?: string }).id === "string")
+    return (v as { id: string }).id;
+  return null;
+}
+
 /** The semester the course belongs to (curriculum semester, not exam period) */
 export function courseSemester(g: GradeRecord): number {
   // 1. Try explicit fields from the API
