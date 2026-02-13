@@ -25,9 +25,24 @@ struct SessionData {
     profile_id: String,
 }
 
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AppSettings {
     pub keep_in_tray: bool,
+    #[serde(default = "default_background_check_minutes")]
+    pub background_check_minutes: u32,
+}
+
+fn default_background_check_minutes() -> u32 {
+    5
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            keep_in_tray: false,
+            background_check_minutes: 5,
+        }
+    }
 }
 
 pub struct AppState {
@@ -415,6 +430,25 @@ fn set_keep_in_tray(app: tauri::AppHandle, value: bool) -> Result<(), String> {
     save_settings(&app, &*guard)
 }
 
+// ── Command: get_background_check_minutes ────────────────────────────
+
+#[tauri::command]
+fn get_background_check_minutes(app: tauri::AppHandle) -> Result<u32, String> {
+    let state = app.state::<AppState>();
+    let guard = state.settings.lock().map_err(|e| e.to_string())?;
+    Ok(guard.background_check_minutes.max(5))
+}
+
+// ── Command: set_background_check_minutes ────────────────────────────
+
+#[tauri::command]
+fn set_background_check_minutes(app: tauri::AppHandle, value: u32) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let mut guard = state.settings.lock().map_err(|e| e.to_string())?;
+    guard.background_check_minutes = value.max(5);
+    save_settings(&app, &*guard)
+}
+
 // ── Command: logout ─────────────────────────────────────────────────
 
 #[tauri::command]
@@ -436,6 +470,7 @@ pub fn run() {
             settings: Mutex::new(AppSettings::default()),
         })
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             try_restore_session,
             login,
@@ -444,7 +479,9 @@ pub fn run() {
             get_grade_stats,
             logout,
             get_keep_in_tray,
-            set_keep_in_tray
+            set_keep_in_tray,
+            get_background_check_minutes,
+            set_background_check_minutes
         ])
         .setup(|app| {
             // Load settings from disk

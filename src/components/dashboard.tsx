@@ -1,21 +1,37 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   ArrowDown01Icon,
+  ArrowReloadHorizontalIcon,
+  CheckmarkCircle01Icon,
   Settings01Icon,
   Moon01Icon,
   Sun01Icon,
   PanelRightCloseIcon,
   GraduationScrollIcon,
 } from "@hugeicons/core-free-icons";
-import { getGrades, logout as tauriLogout, getKeepInTray, setKeepInTray } from "@/lib/tauri";
+import {
+  getGrades,
+  logout as tauriLogout,
+  getKeepInTray,
+  setKeepInTray,
+  getBackgroundCheckMinutes,
+  setBackgroundCheckMinutes,
+} from "@/lib/tauri";
 import { CourseStatsPanel } from "@/components/course-stats-panel";
 import { useTheme } from "@/components/theme-provider";
 import { useLocale } from "@/components/locale-provider";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
@@ -28,13 +44,16 @@ import {
   studentStatus,
   courseName,
   courseCode,
+  gradeRecordId,
   gradeValue,
   gradeEcts,
   gradeStatus,
-  gradeExamPeriod,
   courseSemester,
   courseSyllabusId,
   examPeriodId,
+  examPeriodTitle,
+  examPeriodDisplay,
+  syllabusYear,
 } from "@/types";
 
 const ECTS_TARGET = 240;
@@ -86,71 +105,15 @@ function isFailed(g: GradeRecord): boolean {
   return s.includes("FAIL") || s.includes("ΑΠΟΤ") || (v !== null && v < 5);
 }
 
-/**
- * Best-effort chronological sort key for an exam attempt.
- * Tries (1) explicit attempt number, (2) date-like fields, (3) exam period text.
- * Falls back to the original array index so we always keep a deterministic order.
- */
-function attemptSortKey(
-  g: GradeRecord,
-  fallbackIndex: number
-): number {
-  // 1) Explicit attempt number if the API provides one
-  const attemptNo =
-    (g as any).attemptNo ??
-    (g as any).attempt_no ??
-    (g as any).attempt ??
-    (g as any).try ??
-    (g as any).examAttempt;
-  if (typeof attemptNo === "number" && Number.isFinite(attemptNo)) {
-    return attemptNo;
-  }
-
-  // 2) Date-like fields (ISO strings, timestamps, etc.)
-  const dateFields = [
-    "examDate",
-    "exam_date",
-    "date",
-    "gradeDate",
-    "createdAt",
-    "updatedAt",
-  ];
-  for (const field of dateFields) {
-    const v = (g as any)[field];
-    if (typeof v === "string") {
-      const t = Date.parse(v);
-      if (!Number.isNaN(t)) return t;
-    }
-    if (typeof v === "number" && Number.isFinite(v)) {
-      return v;
-    }
-  }
-
-  // 3) Exam period text like "FEB 2026", "Χειμερινό 2023-24", etc.
-  const periodRaw = gradeExamPeriod(g);
-  if (periodRaw) {
-    const text = String(periodRaw).toLowerCase();
-
-    // Academic year (pick the latest 4‑digit year we see)
-    const yearMatches = text.match(/\b(19|20)\d{2}\b/g);
-    const year = yearMatches && yearMatches.length
-      ? parseInt(yearMatches[yearMatches.length - 1]!, 10)
-      : Number.NaN;
-
-    // Within the academic year, roughly order winter < spring < september
-    let term = 1;
-    if (/(χειμ|winter|win|feb|january|ιαν|φεβ)/i.test(text)) term = 0;
-    else if (/(εαρ|spring|jun|june|may|μαΐ|ιουν)/i.test(text)) term = 1;
-    else if (/(σεπ|sept|sep|autumn|fall|oct|nov)/i.test(text)) term = 2;
-
-    if (!Number.isNaN(year)) {
-      // Multiply to keep terms in order inside the same year
-      return year * 10 + term;
-    }
-  }
-
-  // 4) Fallback: preserve the original relative order
-  return 1_000_000_000 + fallbackIndex;
+/** Sort key for attempt ordering: syllabus year, period, then grade (higher = later effort) */
+function attemptSortKey(g: GradeRecord): [number, string, number] {
+  const year = syllabusYear(g) ?? 0;
+  const periodTitle = examPeriodTitle(g).toUpperCase();
+  const epId = examPeriodId(g);
+  // Prefer periodTitle so "2023-2024 ΧΕΙΜΕΡΙΝΉ" matches when both show same period
+  const periodKey = `${year}-${periodTitle || epId || "0"}`;
+  const grade = gradeValue(g) ?? -1;
+  return [year, periodKey, grade];
 }
 
 
@@ -179,23 +142,19 @@ function buildSemesters(grades: GradeRecord[]): {
 
   const allCourses: CourseGroup[] = [];
   for (const [key, rawAttempts] of courseMap) {
-    // Sort attempts from oldest → newest.
-    // Business rule: any passing attempt (grade ≥ 5 / non‑fail status)
-    // must be the last real try, so all failing attempts come first.
+    // Sort attempts by syllabus year, period (examPeriodId or periodTitle), then grade (higher = later effort).
     const attempts = [...rawAttempts].sort((a, b) => {
-      const aFailed = isFailed(a);
-      const bFailed = isFailed(b);
-      if (aFailed !== bFailed) {
-        // failed (true) should come before passed (false)
-        return aFailed ? -1 : 1;
-      }
+      const [aYear, aPeriod, aGrade] = attemptSortKey(a);
+      const [bYear, bPeriod, bGrade] = attemptSortKey(b);
 
-      const aKey = attemptSortKey(a, indexMap.get(a) ?? 0);
-      const bKey = attemptSortKey(b, indexMap.get(b) ?? 0);
-      if (aKey === bKey) {
-        return (indexMap.get(a) ?? 0) - (indexMap.get(b) ?? 0);
-      }
-      return aKey - bKey;
+      if (aYear !== bYear) return aYear - bYear;
+      const cmpPeriod = aPeriod.localeCompare(bPeriod);
+      if (cmpPeriod !== 0) return cmpPeriod;
+
+      // Same year and period (e.g. both "2023-2024 ΧΕΙΜΕΡΙΝΉ"): higher grade = later effort (retake)
+      if (aGrade !== bGrade) return aGrade - bGrade;
+
+      return (indexMap.get(a) ?? 0) - (indexMap.get(b) ?? 0);
     });
 
     const current = attempts[attempts.length - 1];
@@ -214,7 +173,8 @@ function buildSemesters(grades: GradeRecord[]): {
 
   const semMap = new Map<number, CourseGroup[]>();
   for (const c of allCourses) {
-    const sem = courseSemester(c.current);
+    // Use first attempt for semester grouping (curriculum semester is fixed per course)
+    const sem = courseSemester(c.attempts[0]);
     const arr = semMap.get(sem) ?? [];
     arr.push(c);
     semMap.set(sem, arr);
@@ -254,12 +214,97 @@ function buildSemesters(grades: GradeRecord[]): {
 export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
   const [grades, setGrades] = useState<GradeRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [showRefreshedToast, setShowRefreshedToast] = useState(false);
+  const [newCourseKeys, setNewCourseKeys] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [keepInTray, setKeepInTrayState] = useState(false);
+  const [backgroundCheckMinutes, setBackgroundCheckMinutesState] = useState(5);
   const [statsExpanded, setStatsExpanded] = useState<Set<string>>(new Set());
+  const gradesRef = useRef<GradeRecord[]>([]);
   const { theme, toggle: toggleTheme } = useTheme();
   const { t, locale, setLocale } = useLocale();
+
+  async function checkForNewGrades(
+    currentGrades: GradeRecord[],
+    options: { showToast?: boolean; showNotification?: boolean } = {}
+  ): Promise<{ data: GradeRecord[]; hadNew: boolean }> {
+    const oldIds = new Set(currentGrades.map((g) => gradeRecordId(g)));
+    const oldCourseKeys = new Set(
+      currentGrades.map((g) => courseCode(g) || courseName(g))
+    );
+    const data = await getGrades();
+    const newIds = data.filter((g) => !oldIds.has(gradeRecordId(g)));
+    const newKeys = new Set<string>();
+    for (const g of newIds) {
+      newKeys.add(courseCode(g) || courseName(g));
+    }
+    const hadNew = newKeys.size > 0;
+
+    if (hadNew) {
+      setGrades(data);
+      setNewCourseKeys(newKeys);
+      setTimeout(() => setNewCourseKeys(new Set()), 30000);
+
+      if (options.showNotification !== false) {
+        const brandNewCourses = newIds.filter(
+          (g) => !oldCourseKeys.has(courseCode(g) || courseName(g))
+        );
+        const newEfforts = newIds.filter((g) =>
+          oldCourseKeys.has(courseCode(g) || courseName(g))
+        );
+        const newCourseCount = new Set(
+          brandNewCourses.map((g) => courseCode(g) || courseName(g))
+        ).size;
+        const newEffortCount = new Set(
+          newEfforts.map((g) => courseCode(g) || courseName(g))
+        ).size;
+        let body = "";
+        if (newCourseCount > 0 && newEffortCount > 0) {
+          body = t("newGradesBoth", {
+            courses: newCourseCount,
+            efforts: newEffortCount,
+          });
+        } else if (newCourseCount > 0) {
+          body = t("newGradesCourses", { count: newCourseCount });
+        } else {
+          body = t("newGradesEfforts", { count: newEffortCount });
+        }
+        import("@tauri-apps/plugin-notification")
+          .then(({ sendNotification }) =>
+            sendNotification({ title: t("newGradesTitle"), body })
+          )
+          .catch(() => {});
+      }
+
+      if (options.showToast) {
+        setShowRefreshedToast(true);
+        setTimeout(() => setShowRefreshedToast(false), 2500);
+      }
+    }
+
+    return { data, hadNew };
+  }
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    try {
+      const { data, hadNew } = await checkForNewGrades(grades, {
+        showToast: true,
+        showNotification: true,
+      });
+      if (!hadNew) {
+        setGrades(data);
+        setShowRefreshedToast(true);
+        setTimeout(() => setShowRefreshedToast(false), 2500);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   function semesterLabel(sem: number): string {
     if (sem === 0) return t("semesterOther");
@@ -276,11 +321,76 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
 
   useEffect(() => {
     getKeepInTray().then(setKeepInTrayState);
+    getBackgroundCheckMinutes().then(setBackgroundCheckMinutesState);
   }, []);
+
+  gradesRef.current = grades;
+
+  // Background check for new grades
+  useEffect(() => {
+    const mins = Math.max(5, backgroundCheckMinutes);
+    const ms = mins * 60 * 1000;
+    const id = setInterval(() => {
+      const currentGrades = gradesRef.current;
+      getGrades()
+        .then((data) => {
+          const oldIds = new Set(currentGrades.map((g) => gradeRecordId(g)));
+          const oldCourseKeys = new Set(
+            currentGrades.map((g) => courseCode(g) || courseName(g))
+          );
+          const newIds = data.filter((g) => !oldIds.has(gradeRecordId(g)));
+          const newKeys = new Set<string>();
+          for (const g of newIds) {
+            newKeys.add(courseCode(g) || courseName(g));
+          }
+          if (newKeys.size > 0) {
+            setGrades(data);
+            setNewCourseKeys(newKeys);
+            setTimeout(() => setNewCourseKeys(new Set()), 30000);
+            const brandNewCourses = newIds.filter(
+              (g) => !oldCourseKeys.has(courseCode(g) || courseName(g))
+            );
+            const newEfforts = newIds.filter((g) =>
+              oldCourseKeys.has(courseCode(g) || courseName(g))
+            );
+            const newCourseCount = new Set(
+              brandNewCourses.map((g) => courseCode(g) || courseName(g))
+            ).size;
+            const newEffortCount = new Set(
+              newEfforts.map((g) => courseCode(g) || courseName(g))
+            ).size;
+            let body = "";
+            if (newCourseCount > 0 && newEffortCount > 0) {
+              body = t("newGradesBoth", {
+                courses: newCourseCount,
+                efforts: newEffortCount,
+              });
+            } else if (newCourseCount > 0) {
+              body = t("newGradesCourses", { count: newCourseCount });
+            } else {
+              body = t("newGradesEfforts", { count: newEffortCount });
+            }
+            import("@tauri-apps/plugin-notification")
+              .then(({ sendNotification }) =>
+                sendNotification({ title: t("newGradesTitle"), body })
+              )
+              .catch(() => {});
+          }
+        })
+        .catch(() => {});
+    }, ms);
+    return () => clearInterval(id);
+  }, [backgroundCheckMinutes, t]);
 
   async function handleKeepInTrayChange(checked: boolean) {
     setKeepInTrayState(checked);
     await setKeepInTray(checked);
+  }
+
+  async function handleBackgroundCheckChange(value: number) {
+    const mins = Math.max(5, Math.floor(value));
+    setBackgroundCheckMinutesState(mins);
+    await setBackgroundCheckMinutes(mins);
   }
 
   const { semesters, passedCourses, passedEcts, avg, best } = useMemo(
@@ -356,6 +466,20 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Refresh */}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleRefresh}
+              disabled={refreshing}
+              aria-label={t("refresh")}
+            >
+              <HugeiconsIcon
+                icon={ArrowReloadHorizontalIcon}
+                size={16}
+                className={refreshing ? "animate-spin" : ""}
+              />
+            </Button>
             {/* Settings toggle */}
             <div className="relative">
               <Button
@@ -440,6 +564,28 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
                             onCheckedChange={handleKeepInTrayChange}
                           />
                         </div>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                            {t("backgroundCheck")}
+                          </span>
+                          <Select
+                            value={String(backgroundCheckMinutes)}
+                            onValueChange={(v) =>
+                              handleBackgroundCheckChange(parseInt(v, 10))
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {[5, 10, 15, 20, 30, 60].map((m) => (
+                                <SelectItem key={m} value={String(m)}>
+                                  {t("backgroundCheckMinutes", { minutes: m })}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
                       </div>
                     </motion.div>
                   </>
@@ -447,7 +593,12 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
               </AnimatePresence>
             </div>
 
-            <Button variant="outline" size="sm" onClick={handleLogout} className="rounded-lg">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleLogout}
+              className="rounded-lg hover:border-red-500/50 hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400"
+            >
               {t("signOut")}
             </Button>
           </div>
@@ -588,6 +739,7 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
                     {section.courses.map((course) => {
                       const hasHistory = course.attempts.length > 1;
                       const isOpen = expanded.has(course.key);
+                      const isNew = newCourseKeys.has(course.key);
                       const score = gradeValue(course.current);
                       const failed = !course.passed;
                       const csId = courseSyllabusId(course.current);
@@ -606,7 +758,7 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
                               hasHistory
                                 ? "cursor-pointer hover:bg-muted/50"
                                 : "cursor-default"
-                            }`}
+                            } ${isNew ? "bg-primary/5 ring-1 ring-primary/20 dark:ring-primary/30" : ""}`}
                           >
                             <div className="flex items-center gap-2 min-w-0">
                               {hasHistory ? (
@@ -621,13 +773,21 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
                                 <div className="w-4 shrink-0" />
                               )}
                               <div className="min-w-0">
-                                <p className="font-medium truncate">
+                                <p className="font-medium truncate flex items-center gap-2">
                                   {course.name}
+                                  {isNew && (
+                                    <span className="shrink-0 rounded bg-primary px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-primary-foreground">
+                                      {t("new")}
+                                    </span>
+                                  )}
                                 </p>
                                 <p className="text-xs text-muted-foreground">
                                   {course.code}
                                   {hasHistory &&
                                     ` · ${t("attemptsCount", { count: course.attempts.length })}`}
+                                  {examPeriodDisplay(course.current) && (
+                                    <> · {examPeriodDisplay(course.current)}</>
+                                  )}
                                 </p>
                               </div>
                             </div>
@@ -665,7 +825,7 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
                                 onClick={() => toggleStats(course.key)}
                                 className="w-full px-4 py-2.5 text-left text-xs font-medium text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors flex items-center gap-2"
                               >
-                                <span className="text-[10px]">{showStats ? "▼" : "▶"}</span>
+                                <span className="text-[10px]">{showStats ? "↓" : "→"}</span>
                                 {t("gradeDistribution")}
                               </button>
                               <AnimatePresence>
@@ -708,7 +868,7 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
                                       >
                                         <p className="pl-6 text-muted-foreground text-xs">
                                           {ai + 1}.{" "}
-                                          {gradeExamPeriod(a) || t("attemptN", { n: ai + 1 })}
+                                          {examPeriodDisplay(a) || t("attemptN", { n: ai + 1 })}
                                           {isCurrent ? " ✓" : ""}
                                         </p>
 
@@ -748,6 +908,45 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
           </div>
         )}
       </main>
+
+      {/* Refresh notification */}
+      <AnimatePresence>
+        {showRefreshedToast && (
+          <motion.div
+            initial={{ opacity: 0, y: 12, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 8, scale: 0.96 }}
+            transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+            className="fixed bottom-6 right-6 z-50 w-72 overflow-hidden rounded-xl border bg-popover shadow-xl shadow-black/10 dark:shadow-black/30 ring-1 ring-border/50"
+          >
+            <div className="flex items-start gap-3 p-4">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-500/15 dark:bg-emerald-500/20">
+                <HugeiconsIcon
+                  icon={CheckmarkCircle01Icon}
+                  size={20}
+                  className="text-emerald-600 dark:text-emerald-400"
+                />
+              </div>
+              <div className="min-w-0 flex-1 pt-0.5">
+                <p className="font-semibold text-foreground">
+                  {t("refreshed")}
+                </p>
+                <p className="mt-0.5 text-sm text-muted-foreground">
+                  {t("refreshedDetail", {
+                    count: semesters.reduce((n, s) => n + s.courses.length, 0),
+                  })}
+                </p>
+              </div>
+            </div>
+            <motion.div
+              className="h-1 bg-emerald-500/30 dark:bg-emerald-500/40"
+              initial={{ width: "100%" }}
+              animate={{ width: "0%" }}
+              transition={{ duration: 2.5, ease: "linear" }}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }
