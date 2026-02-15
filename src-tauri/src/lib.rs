@@ -1,8 +1,6 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use reqwest::cookie::{CookieStore as _, Jar};
-use reqwest::Client;
 use scraper::{Html, Selector};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -12,6 +10,8 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::Manager;
 use tauri::WindowEvent;
+use tauri_plugin_http::reqwest::cookie::{CookieStore as _, Jar};
+use tauri_plugin_http::reqwest::Client;
 use url::Url;
 
 const SSO_URL: &str = "https://sso.uom.gr/login";
@@ -174,13 +174,21 @@ fn delete_session_from_disk(app: &tauri::AppHandle) {
     }
 }
 
-// ── Credential storage (OS keychain) ─────────────────────────────────
+// ── Credential storage ───────────────────────────────────────────────
+// Desktop: OS keychain (keyring crate)
+// Mobile (Android): file in app_data_dir (sandboxed, same pattern as session)
 
 const CREDENTIAL_SERVICE: &str = "uom-grades";
 const CREDENTIAL_ACCOUNT: &str = "login";
 
+#[cfg(not(desktop))]
+fn credentials_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    Ok(dir.join("credentials.json"))
+}
+
 #[cfg(desktop)]
-fn save_credentials(username: &str, password: &str) -> Result<(), String> {
+fn save_credentials(_app: &tauri::AppHandle, username: &str, password: &str) -> Result<(), String> {
     let entry = keyring::Entry::new(CREDENTIAL_SERVICE, CREDENTIAL_ACCOUNT)
         .map_err(|e| format!("Keychain error: {e}"))?;
     let payload = serde_json::json!({ "u": username, "p": password }).to_string();
@@ -190,19 +198,36 @@ fn save_credentials(username: &str, password: &str) -> Result<(), String> {
 }
 
 #[cfg(not(desktop))]
-fn save_credentials(_username: &str, _password: &str) -> Result<(), String> {
-    Ok(()) // Keychain not available on mobile
+fn save_credentials(app: &tauri::AppHandle, username: &str, password: &str) -> Result<(), String> {
+    let payload = serde_json::json!({ "u": username, "p": password });
+    let path = credentials_path(app)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&path, serde_json::to_string(&payload).unwrap()).map_err(|e| e.to_string())
 }
 
 #[cfg(desktop)]
-fn load_credentials() -> Result<(String, String), String> {
+fn load_credentials(_app: &tauri::AppHandle) -> Result<(String, String), String> {
     let entry = keyring::Entry::new(CREDENTIAL_SERVICE, CREDENTIAL_ACCOUNT)
         .map_err(|e| format!("Keychain error: {e}"))?;
     let payload = entry
         .get_password()
         .map_err(|e| format!("Failed to load credentials: {e}"))?;
+    parse_credential_payload(&payload)
+}
+
+#[cfg(not(desktop))]
+fn load_credentials(app: &tauri::AppHandle) -> Result<(String, String), String> {
+    let path = credentials_path(app)?;
+    let data =
+        std::fs::read_to_string(&path).map_err(|e| format!("Failed to load credentials: {e}"))?;
+    parse_credential_payload(&data)
+}
+
+fn parse_credential_payload(payload: &str) -> Result<(String, String), String> {
     let obj: serde_json::Value =
-        serde_json::from_str(&payload).map_err(|_| "Corrupt stored credentials".to_string())?;
+        serde_json::from_str(payload).map_err(|_| "Corrupt stored credentials".to_string())?;
     let username = obj
         .get("u")
         .and_then(|v| v.as_str())
@@ -216,21 +241,18 @@ fn load_credentials() -> Result<(String, String), String> {
     Ok((username, password))
 }
 
-#[cfg(not(desktop))]
-fn load_credentials() -> Result<(String, String), String> {
-    Err("Keychain not available on mobile".to_string())
-}
-
 #[cfg(desktop)]
-fn delete_credentials() {
+fn delete_credentials(_app: &tauri::AppHandle) {
     if let Ok(entry) = keyring::Entry::new(CREDENTIAL_SERVICE, CREDENTIAL_ACCOUNT) {
         let _ = entry.delete_password();
     }
 }
 
 #[cfg(not(desktop))]
-fn delete_credentials() {
-    // No-op on mobile
+fn delete_credentials(app: &tauri::AppHandle) {
+    if let Ok(path) = credentials_path(app) {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 fn build_client_from_cookies(cookies: &str) -> Result<Client, String> {
@@ -285,9 +307,11 @@ async fn api_get(
         .await
         .map_err(|e| format!("Request failed: {e}"))?;
 
-    resp.json::<Value>()
+    let text = resp
+        .text()
         .await
-        .map_err(|e| format!("Invalid JSON: {e}"))
+        .map_err(|e| format!("Invalid response: {e}"))?;
+    serde_json::from_str(&text).map_err(|e| format!("Invalid JSON: {e}"))
 }
 
 // ── Core login logic (shared by login and auto-restore) ───────────────
@@ -345,9 +369,13 @@ async fn perform_login(
         .await
         .map_err(|e| format!("Login request failed: {e}"))?;
 
-    let final_url = resp.url().to_string();
     if resp.url().host_str() == Some("sso.uom.gr") {
-        return Err(format!("Invalid username or password (ended at {final_url})"));
+        // Failed login: clear any stale session so next attempt starts fresh
+        delete_session_from_disk(app);
+        if let Ok(mut guard) = app.state::<AppState>().session.lock() {
+            *guard = None;
+        }
+        return Err(format!("Invalid username or password"));
     }
 
     // 5. Grab the CSRF token
@@ -363,34 +391,61 @@ async fn perform_login(
     let csrf = extract_csrf(&portal_html)?;
 
     // 6. Fetch student profile
-    let profiles: Value = client
+    let profiles_text = client
         .get(format!("{PORTAL_URL}/api/person/profiles"))
         .header("X-CSRF-TOKEN", &csrf)
         .header("X-Requested-With", "XMLHttpRequest")
         .send()
         .await
         .map_err(|e| e.to_string())?
-        .json()
+        .text()
         .await
         .map_err(|e| e.to_string())?;
+    let profiles: Value =
+        serde_json::from_str(&profiles_text).map_err(|e| format!("Invalid JSON: {e}"))?;
 
     let profile_id = find_profile_id(&profiles)
         .ok_or_else(|| format!("No student profiles found in: {profiles}"))?;
 
     // 7. Fetch student info
-    let student_info =
-        api_get(&client, "/feign/student/student_data", &csrf, &profile_id).await?;
+    let student_info = api_get(&client, "/feign/student/student_data", &csrf, &profile_id).await?;
 
     // 8. Save session to disk (cookies + CSRF + profile)
     let _ = save_session_to_disk(app, &jar, &csrf, &profile_id);
 
     // 9. Store in memory
-    store_session(app, SessionData { client, csrf, profile_id })?;
+    store_session(
+        app,
+        SessionData {
+            client,
+            csrf,
+            profile_id,
+        },
+    )?;
 
     Ok(student_info)
 }
 
+// ── Command: has_stored_credentials ───────────────────────────────────
+
+#[tauri::command]
+fn has_stored_credentials(app: tauri::AppHandle) -> bool {
+    load_credentials(&app).is_ok()
+}
+
+// ── Command: is_mobile ─────────────────────────────────────────────────
+
+#[tauri::command]
+fn is_mobile() -> bool {
+    #[cfg(target_os = "android")]
+    return true;
+    #[cfg(not(target_os = "android"))]
+    return false;
+}
+
 // ── Command: try_restore_session ────────────────────────────────────
+// On desktop: tries session, then credentials.
+// On mobile: only tries session; credential restore requires biometric first (see frontend).
 
 #[tauri::command]
 async fn try_restore_session(app: tauri::AppHandle) -> Result<Value, String> {
@@ -425,18 +480,33 @@ async fn try_restore_session(app: tauri::AppHandle) -> Result<Value, String> {
         }
     }
 
-    // Second try: auto re-login with stored credentials (OS keychain)
-    if let Ok((username, password)) = load_credentials() {
+    // Second try: auto re-login with stored credentials (desktop only; mobile uses biometric flow)
+    #[cfg(desktop)]
+    if let Ok((username, password)) = load_credentials(&app) {
         match perform_login(username, password, &app).await {
             Ok(info) => return Ok(info),
             Err(_) => {
-                // Credentials may have changed; remove stored ones
-                delete_credentials();
+                delete_credentials(&app);
             }
         }
     }
 
     Err("No valid session. Please sign in.".to_string())
+}
+
+// ── Command: try_restore_from_credentials ────────────────────────────
+// Used on mobile after biometric auth succeeds. Performs login with stored credentials.
+
+#[tauri::command]
+async fn try_restore_from_credentials(app: tauri::AppHandle) -> Result<Value, String> {
+    let (username, password) = load_credentials(&app)?;
+    match perform_login(username, password, &app).await {
+        Ok(info) => Ok(info),
+        Err(_) => {
+            delete_credentials(&app);
+            Err("Stored credentials are invalid. Please sign in again.".to_string())
+        }
+    }
 }
 
 // ── Command: login ──────────────────────────────────────────────────
@@ -451,11 +521,20 @@ struct LoginArgs {
 
 #[tauri::command]
 async fn login(args: LoginArgs, app: tauri::AppHandle) -> Result<Value, String> {
-    let student_info =
-        perform_login(args.username.clone(), args.password.clone(), &app).await?;
+    // Clear any existing session so each login attempt starts completely fresh.
+    // This fixes the case where a failed attempt leaves CAS in a state that
+    // rejects subsequent attempts even with correct credentials.
+    delete_session_from_disk(&app);
+    {
+        let state = app.state::<AppState>();
+        let mut guard = state.session.lock().map_err(|e| e.to_string())?;
+        *guard = None;
+    }
+
+    let student_info = perform_login(args.username.clone(), args.password.clone(), &app).await?;
 
     if args.remember_me {
-        let _ = save_credentials(&args.username, &args.password);
+        let _ = save_credentials(&app, &args.username, &args.password);
     }
 
     Ok(student_info)
@@ -495,8 +574,7 @@ async fn get_grade_stats(
     let (client, csrf, pid) = extract_session(&app)?;
     let path = format!(
         "/feign/student/grades/stats/course_syllabus/{}/exam_period/{}",
-        args.course_syllabus_id,
-        args.exam_period_id
+        args.course_syllabus_id, args.exam_period_id
     );
     api_get(&client, &path, &csrf, &pid).await
 }
@@ -544,7 +622,7 @@ fn set_background_check_minutes(app: tauri::AppHandle, value: u32) -> Result<(),
 #[tauri::command]
 fn logout(app: tauri::AppHandle) -> Result<(), String> {
     delete_session_from_disk(&app);
-    delete_credentials();
+    delete_credentials(&app);
     let state = app.state::<AppState>();
     let mut guard = state.session.lock().map_err(|e| e.to_string())?;
     *guard = None;
@@ -555,15 +633,26 @@ fn logout(app: tauri::AppHandle) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    #[cfg(mobile)]
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_biometric::init())
+        .plugin(tauri_plugin_haptics::init());
+    #[cfg(not(mobile))]
+    let builder = tauri::Builder::default().plugin(tauri_plugin_opener::init());
+
+    builder
         .manage(AppState {
             session: Mutex::new(None),
             settings: Mutex::new(AppSettings::default()),
         })
-        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             try_restore_session,
+            has_stored_credentials,
+            try_restore_from_credentials,
+            is_mobile,
             login,
             get_student_info,
             get_grades,
@@ -591,19 +680,17 @@ pub fn run() {
                 let mut tray_builder = TrayIconBuilder::new()
                     .menu(&menu)
                     .show_menu_on_left_click(false)
-                    .on_menu_event(move |app, event| {
-                        match event.id.as_ref() {
-                            "show" => {
-                                if let Some(window) = app.get_webview_window("main") {
-                                    let _ = window.show();
-                                    let _ = window.set_focus();
-                                }
+                    .on_menu_event(move |app, event| match event.id.as_ref() {
+                        "show" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
                             }
-                            "quit" => {
-                                app.exit(0);
-                            }
-                            _ => {}
                         }
+                        "quit" => {
+                            app.exit(0);
+                        }
+                        _ => {}
                     })
                     .on_tray_icon_event(|tray, event| {
                         if let TrayIconEvent::Click {

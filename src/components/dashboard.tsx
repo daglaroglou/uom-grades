@@ -23,6 +23,7 @@ import {
   setKeepInTray,
   getBackgroundCheckMinutes,
   setBackgroundCheckMinutes,
+  openUrl,
 } from "@/lib/tauri";
 import { CourseStatsPanel } from "@/components/course-stats-panel";
 import { useTheme } from "@/components/theme-provider";
@@ -662,11 +663,11 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
       animate={{ opacity: 1 }}
       exit={{ opacity: 0, y: -20 }}
       transition={{ duration: 0.3 }}
-      className="page-bg min-h-screen bg-background"
+      className="page-bg min-h-screen bg-background overflow-x-hidden"
     >
       {/* ── Header ─────────────────────────────────────────────── */}
-      <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
-        <div className="mx-auto flex w-full max-w-5xl flex-col gap-4 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 xl:max-w-6xl 2xl:max-w-7xl">
+      <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 pt-[env(safe-area-inset-top,0)]">
+        <div className="mx-auto flex w-full max-w-5xl flex-col gap-4 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 xl:max-w-6xl 2xl:max-w-7xl min-w-0">
           <div className="flex min-w-0 items-center gap-4">
             <div className="rounded-xl bg-primary/10 p-2.5 ring-1 ring-primary/10 dark:ring-primary/20">
               <HugeiconsIcon
@@ -690,7 +691,7 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
             </div>
           </div>
 
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2 flex-wrap justify-end">
             {/* Refresh */}
             <UITooltip>
               <TooltipTrigger asChild>
@@ -726,115 +727,6 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
                 <TooltipContent>{t("tooltipSettings")}</TooltipContent>
               </UITooltip>
 
-              {/* Settings dropdown */}
-              <AnimatePresence>
-                {settingsOpen && (
-                  <>
-                    {/* Backdrop */}
-                    <div
-                      className="fixed inset-0 z-40"
-                      onClick={() => setSettingsOpen(false)}
-                    />
-                    <motion.div
-                      initial={{ opacity: 0, y: -4, scale: 0.96 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: -4, scale: 0.96 }}
-                      transition={{ duration: 0.15 }}
-                      className="absolute right-0 top-10 z-50 w-64 rounded-xl border bg-popover p-4 shadow-xl shadow-black/10 dark:shadow-black/30 ring-1 ring-border/50"
-                    >
-                      <p className="text-sm font-semibold mb-3">{t("settings")}</p>
-                      <div className="space-y-3">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2 text-sm">
-                            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                              {t("language")}
-                            </span>
-                          </div>
-                          <div className="flex gap-1">
-                            <button
-                              type="button"
-                              onClick={() => setLocale("en")}
-                              className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
-                                locale === "en"
-                                  ? "bg-primary text-primary-foreground"
-                                  : "bg-muted hover:bg-muted/80"
-                              }`}
-                            >
-                              EN
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setLocale("el")}
-                              className={`px-2 py-1 rounded text-xs font-medium transition-colors ${
-                                locale === "el"
-                                  ? "bg-primary text-primary-foreground"
-                                  : "bg-muted hover:bg-muted/80"
-                              }`}
-                            >
-                              ΕΛ
-                            </button>
-                          </div>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2 text-sm">
-                            {theme === "dark" ? (
-                              <HugeiconsIcon icon={Moon01Icon} size={16} />
-                            ) : (
-                              <HugeiconsIcon icon={Sun01Icon} size={16} />
-                            )}
-                            <span>{t("darkMode")}</span>
-                          </div>
-                          <Switch
-                            checked={theme === "dark"}
-                            onCheckedChange={toggleTheme}
-                          />
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2 text-sm">
-                            <HugeiconsIcon icon={PanelRightCloseIcon} size={16} />
-                            <span>{t("keepInTray")}</span>
-                          </div>
-                          <Switch
-                            checked={keepInTray}
-                            onCheckedChange={handleKeepInTrayChange}
-                          />
-                        </div>
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                            {t("backgroundCheck")}
-                          </span>
-                          <Select
-                            value={String(backgroundCheckMinutes)}
-                            onValueChange={(v) =>
-                              handleBackgroundCheckChange(parseInt(v, 10))
-                            }
-                          >
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {[5, 10, 15, 20, 30, 60].map((m) => (
-                                <SelectItem key={m} value={String(m)}>
-                                  {t("backgroundCheckMinutes", { minutes: m })}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2 text-sm">
-                            <span>{t("refreshOnFocus")}</span>
-                          </div>
-                          <Switch
-                            checked={refreshOnFocus}
-                            onCheckedChange={handleRefreshOnFocusChange}
-                          />
-                        </div>
-                      </div>
-                    </motion.div>
-                  </>
-                )}
-              </AnimatePresence>
             </div>
 
             <UITooltip>
@@ -867,7 +759,7 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
         </div>
       </header>
 
-        <main className="mx-auto w-full max-w-5xl min-w-0 px-4 py-8 space-y-8 sm:px-6 xl:max-w-6xl 2xl:max-w-7xl">
+        <main className="mx-auto w-full max-w-5xl min-w-0 px-4 py-8 space-y-8 sm:px-6 xl:max-w-6xl 2xl:max-w-7xl pb-[max(2rem,env(safe-area-inset-bottom))]">
         {/* ── Summary cards (equal height) ────────────────────── */}
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           {[
@@ -1356,7 +1248,7 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
               >
               <h3 className="text-lg font-semibold">{t("aboutTitle")}</h3>
               <p className="mt-2 text-sm text-muted-foreground">
-                {t("aboutVersion", { version: "0.1.0" })}
+                {t("aboutVersion", { version: "0.1.1" })}
               </p>
               <p className="mt-3 text-sm text-muted-foreground">
                 {t("aboutPrivacy")}
@@ -1365,27 +1257,136 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
                 {t("aboutNotAffiliated")}
               </p>
               <div className="mt-4 flex flex-wrap gap-3">
-                <a
-                  href="https://github.com/daglaroglou/uom-grades"
-                  target="_blank"
-                  rel="noopener noreferrer"
+                <button
+                  type="button"
+                  onClick={() => openUrl("https://github.com/daglaroglou/uom-grades")}
                   className="inline-flex items-center gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm font-medium hover:bg-muted transition-colors"
                 >
                   <HugeiconsIcon icon={Github01Icon} size={18} />
                   {t("viewOnGitHub")}
-                </a>
-                <a
-                  href="https://sis-portal.uom.gr"
-                  target="_blank"
-                  rel="noopener noreferrer"
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openUrl("https://sis-portal.uom.gr")}
                   className="inline-flex items-center gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm font-medium hover:bg-muted transition-colors"
                 >
                   {t("aboutPortal")} →
-                </a>
+                </button>
               </div>
               <div className="mt-6 flex justify-end">
                 <Button onClick={() => setAboutOpen(false)}>{t("confirm")}</Button>
               </div>
+              </motion.div>
+            </div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Settings modal */}
+      <AnimatePresence>
+        {settingsOpen && (
+          <>
+            <div
+              className="fixed inset-0 z-40 bg-black/40"
+              onClick={() => setSettingsOpen(false)}
+            />
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.96 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.96 }}
+                className="w-full max-w-md rounded-xl border bg-popover p-6 shadow-xl ring-1 ring-border/50 my-auto"
+              >
+                <h3 className="text-lg font-semibold mb-4">{t("settings")}</h3>
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-sm font-medium text-muted-foreground">
+                      {t("language")}
+                    </span>
+                    <div className="flex gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setLocale("en")}
+                        className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                          locale === "en"
+                            ? "bg-primary text-primary-foreground"
+                            : "bg-muted hover:bg-muted/80"
+                        }`}
+                      >
+                        EN
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setLocale("el")}
+                        className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                          locale === "el"
+                            ? "bg-primary text-primary-foreground"
+                            : "bg-muted hover:bg-muted/80"
+                        }`}
+                      >
+                        ΕΛ
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-2 text-sm">
+                      {theme === "dark" ? (
+                        <HugeiconsIcon icon={Moon01Icon} size={18} />
+                      ) : (
+                        <HugeiconsIcon icon={Sun01Icon} size={18} />
+                      )}
+                      <span>{t("darkMode")}</span>
+                    </div>
+                    <Switch
+                      checked={theme === "dark"}
+                      onCheckedChange={toggleTheme}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-2 text-sm">
+                      <HugeiconsIcon icon={PanelRightCloseIcon} size={18} />
+                      <span>{t("keepInTray")}</span>
+                    </div>
+                    <Switch
+                      checked={keepInTray}
+                      onCheckedChange={handleKeepInTrayChange}
+                    />
+                  </div>
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <span className="text-sm font-medium text-muted-foreground">
+                      {t("backgroundCheck")}
+                    </span>
+                    <Select
+                      value={String(backgroundCheckMinutes)}
+                      onValueChange={(v) =>
+                        handleBackgroundCheckChange(parseInt(v, 10))
+                      }
+                    >
+                      <SelectTrigger className="w-full sm:w-32">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {[5, 10, 15, 20, 30, 60].map((m) => (
+                          <SelectItem key={m} value={String(m)}>
+                            {t("backgroundCheckMinutes", { minutes: m })}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-sm">{t("refreshOnFocus")}</span>
+                    <Switch
+                      checked={refreshOnFocus}
+                      onCheckedChange={handleRefreshOnFocusChange}
+                    />
+                  </div>
+                </div>
+                <div className="mt-6 flex justify-end">
+                  <Button onClick={() => setSettingsOpen(false)}>
+                    {t("confirm")}
+                  </Button>
+                </div>
               </motion.div>
             </div>
           </>

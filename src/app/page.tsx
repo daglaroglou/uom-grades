@@ -5,21 +5,47 @@ import { AnimatePresence, motion } from "motion/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { GraduationScrollIcon } from "@hugeicons/core-free-icons";
 import { LoginForm } from "@/components/login-form";
+import { BiometricPrompt } from "@/components/biometric-prompt";
 import { Dashboard } from "@/components/dashboard";
-import { tryRestoreSession } from "@/lib/tauri";
+import {
+  tryRestoreSession,
+  hasStoredCredentials,
+  isMobile,
+} from "@/lib/tauri";
 import { useLocale } from "@/components/locale-provider";
 import type { StudentInfo } from "@/types";
 
 export default function Home() {
   const [studentInfo, setStudentInfo] = useState<StudentInfo | null>(null);
   const [checking, setChecking] = useState(true);
+  const [needsBiometric, setNeedsBiometric] = useState(false);
+  const [sessionRestoredFromCookies, setSessionRestoredFromCookies] =
+    useState(false);
   const { t } = useLocale();
 
   // Try to restore a saved session on launch
   useEffect(() => {
     tryRestoreSession()
-      .then((info) => {
-        if (info) setStudentInfo(info);
+      .then(async (info) => {
+        if (info) {
+          const mobile = await isMobile();
+          if (mobile) {
+            // On mobile: require biometric on every session restore
+            setSessionRestoredFromCookies(true);
+            setNeedsBiometric(true);
+          } else {
+            setStudentInfo(info);
+          }
+        } else {
+          const hasCreds = await hasStoredCredentials();
+          setSessionRestoredFromCookies(false);
+          setNeedsBiometric(hasCreds);
+        }
+      })
+      .catch(async () => {
+        const hasCreds = await hasStoredCredentials();
+        setSessionRestoredFromCookies(false);
+        setNeedsBiometric(hasCreds);
       })
       .finally(() => setChecking(false));
   }, []);
@@ -122,7 +148,19 @@ export default function Home() {
   return (
     <AnimatePresence mode="wait">
       {!studentInfo ? (
-        <LoginForm key="login" onLogin={setStudentInfo} />
+        needsBiometric ? (
+          <BiometricPrompt
+            key="biometric"
+            onSuccess={setStudentInfo}
+            onFallback={() => {
+              setNeedsBiometric(false);
+              setSessionRestoredFromCookies(false);
+            }}
+            sessionRestoredFromCookies={sessionRestoredFromCookies}
+          />
+        ) : (
+          <LoginForm key="login" onLogin={setStudentInfo} />
+        )
       ) : (
         <Dashboard
           key="dashboard"
