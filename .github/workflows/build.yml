@@ -12,7 +12,7 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  build-desktop:
     strategy:
       fail-fast: false
       matrix:
@@ -69,9 +69,13 @@ jobs:
           draft: false
           prerelease: false
           generate_release_notes: true
-          files: src-tauri/target/**/bundle/**/*
+          files: |
+            src-tauri/target/**/bundle/**/*.exe
+            src-tauri/target/**/bundle/**/*.dmg
+            src-tauri/target/**/bundle/**/*.deb
 
   build-android:
+    needs: build-desktop
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
@@ -135,4 +139,4 @@ jobs:
           draft: false
           prerelease: false
           generate_release_notes: true
-          files: src-tauri/gen/android/app/build/outputs/**/*
+          files: src-tauri/gen/android/app/build/outputs/**/*.apk
