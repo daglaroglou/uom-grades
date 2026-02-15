@@ -115,11 +115,11 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Generate Android icons from desktop icons
-        run: npm run tauri icon src-tauri/icons/128x128.png
-
       - name: Initialize Android project
         run: npm run tauri android init
+
+      - name: Generate Android icons from desktop icons
+        run: npm run tauri icon src-tauri/icons/128x128.png
 
       - name: Setup Android signing
         run: |
