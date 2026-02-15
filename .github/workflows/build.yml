@@ -126,8 +126,20 @@ jobs:
           echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" >> src-tauri/gen/android/keystore.properties
           echo "password=${{ secrets.ANDROID_KEY_PASSWORD }}" >> src-tauri/gen/android/keystore.properties
 
+      - name: Configure release signing in Gradle
+        run: |
+          cp .github/android-signing.gradle.kts src-tauri/gen/android/app/signing.gradle.kts
+          echo 'apply(from = "signing.gradle.kts")' >> src-tauri/gen/android/app/build.gradle.kts
+
       - name: Build Tauri Android app
         run: npm run tauri android build -- --apk
+
+      - name: Rename APK for release
+        run: |
+          mkdir -p dist
+          VERSION="${{ github.event.inputs.version }}"
+          APK=$(find src-tauri/gen/android/app/build/outputs -name "*.apk" | head -1)
+          cp "$APK" "dist/UoM.Grades_${VERSION}_android.apk"
 
       - name: Create Release and Upload Artifacts
         uses: softprops/action-gh-release@v2
@@ -138,4 +150,4 @@ jobs:
           draft: false
           prerelease: false
           generate_release_notes: true
-          files: src-tauri/gen/android/app/build/outputs/**/*.apk
+          files: dist/UoM.Grades_${{ github.event.inputs.version }}_android.apk
