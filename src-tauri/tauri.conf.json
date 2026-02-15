@@ -38,8 +38,12 @@
     "windows": {
       "nsis": {
         "installMode": "currentUser",
-        "languages": ["English", "Greek"],
-        "displayLanguageSelector": false
+        "languages": [
+          "English",
+          "Greek"
+        ],
+        "displayLanguageSelector": false,
+        "installerIcon": "icons/icon.ico"
       },
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
