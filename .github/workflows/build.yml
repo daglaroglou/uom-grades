@@ -75,7 +75,6 @@ jobs:
             src-tauri/target/**/bundle/**/*.deb
 
   build-android:
-    needs: build-desktop
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
