@@ -120,6 +120,10 @@ jobs:
 
       - name: Setup Android signing
         run: |
+          if [ -z "${{ secrets.ANDROID_KEY_BASE64 }}" ] || [ -z "${{ secrets.ANDROID_KEY_ALIAS }}" ] || [ -z "${{ secrets.ANDROID_KEY_PASSWORD }}" ]; then
+            echo "Error: Set ANDROID_KEY_BASE64, ANDROID_KEY_ALIAS, and ANDROID_KEY_PASSWORD in repository secrets for signed APK."
+            exit 1
+          fi
           mkdir -p src-tauri/gen/android
           echo "${{ secrets.ANDROID_KEY_BASE64 }}" | base64 -d > $RUNNER_TEMP/keystore.jks
           echo "storeFile=$RUNNER_TEMP/keystore.jks" > src-tauri/gen/android/keystore.properties
@@ -128,8 +132,7 @@ jobs:
 
       - name: Configure release signing in Gradle
         run: |
-          cp .github/android-signing.gradle.kts src-tauri/gen/android/app/signing.gradle.kts
-          echo 'apply(from = "signing.gradle.kts")' >> src-tauri/gen/android/app/build.gradle.kts
+          printf '\napply(from = rootProject.file("../../../.github/android-signing.gradle.kts"))\n' >> src-tauri/gen/android/app/build.gradle.kts
 
       - name: Build Tauri Android app
         run: npm run tauri android build -- --apk
