@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import type { StudentInfo } from "@/types";
 
 interface LoginFormProps {
@@ -26,6 +27,7 @@ interface LoginFormProps {
 export function LoginForm({ onLogin }: LoginFormProps) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [rememberMe, setRememberMe] = useState(true);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const { t } = useLocale();
@@ -36,7 +38,7 @@ export function LoginForm({ onLogin }: LoginFormProps) {
     setLoading(true);
 
     try {
-      const info = await login(username, password);
+      const info = await login(username, password, rememberMe);
       onLogin(info);
     } catch (err) {
       setError(String(err));
@@ -117,6 +119,25 @@ export function LoginForm({ onLogin }: LoginFormProps) {
                   onChange={(e) => setPassword(e.target.value)}
                   required
                   className="h-11 rounded-lg border-border/80 bg-muted/30 focus:bg-background transition-colors"
+                />
+              </motion.div>
+
+              <motion.div
+                className="flex items-center justify-between rounded-lg border border-border/50 bg-muted/20 px-3 py-2"
+                initial={{ opacity: 0, x: -12 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.32 }}
+              >
+                <Label
+                  htmlFor="remember-me"
+                  className="cursor-pointer text-sm font-medium"
+                >
+                  {t("rememberMe")}
+                </Label>
+                <Switch
+                  id="remember-me"
+                  checked={rememberMe}
+                  onCheckedChange={setRememberMe}
                 />
               </motion.div>
 

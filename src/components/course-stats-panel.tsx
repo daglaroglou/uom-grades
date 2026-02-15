@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { motion } from "motion/react";
 import { getGradeStats } from "@/lib/tauri";
+import { useWindowSize } from "@/hooks/use-window-size";
 import { useLocale } from "@/components/locale-provider";
 import {
   BarChart,
@@ -57,6 +58,7 @@ export function CourseStatsPanel({
   myGrade,
 }: CourseStatsPanelProps) {
   const { t } = useLocale();
+  const { width: windowWidth } = useWindowSize();
   const [raw, setRaw] = useState<number[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -201,7 +203,7 @@ export function CourseStatsPanel({
         )}
 
         {/* Chart */}
-        <div className="h-[200px] w-full rounded-lg bg-background/50 p-2 border border-border/40">
+        <div className="h-[200px] w-full min-w-0 rounded-lg bg-background/50 p-2 border border-border/40" key={windowWidth}>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart
               data={distribution}

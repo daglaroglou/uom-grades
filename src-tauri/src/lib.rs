@@ -14,7 +14,7 @@ use url::Url;
 
 const SSO_URL: &str = "https://sso.uom.gr/login";
 const PORTAL_URL: &str = "https://sis-portal.uom.gr";
-const SERVICE_URL: &str = "https://sis-portal.uom.gr/login/cas";
+const SERVICE_URL: &str = "https://sis-portal.uom.gr/loicsgin/cas";
 const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 // ── Session types ───────────────────────────────────────────────────
@@ -172,6 +172,47 @@ fn delete_session_from_disk(app: &tauri::AppHandle) {
     }
 }
 
+// ── Credential storage (OS keychain) ─────────────────────────────────
+
+const CREDENTIAL_SERVICE: &str = "uom-grades";
+const CREDENTIAL_ACCOUNT: &str = "login";
+
+fn save_credentials(username: &str, password: &str) -> Result<(), String> {
+    let entry = keyring::Entry::new(CREDENTIAL_SERVICE, CREDENTIAL_ACCOUNT)
+        .map_err(|e| format!("Keychain error: {e}"))?;
+    let payload = serde_json::json!({ "u": username, "p": password }).to_string();
+    entry
+        .set_password(&payload)
+        .map_err(|e| format!("Failed to save credentials: {e}"))
+}
+
+fn load_credentials() -> Result<(String, String), String> {
+    let entry = keyring::Entry::new(CREDENTIAL_SERVICE, CREDENTIAL_ACCOUNT)
+        .map_err(|e| format!("Keychain error: {e}"))?;
+    let payload = entry
+        .get_password()
+        .map_err(|e| format!("Failed to load credentials: {e}"))?;
+    let obj: serde_json::Value =
+        serde_json::from_str(&payload).map_err(|_| "Corrupt stored credentials".to_string())?;
+    let username = obj
+        .get("u")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .ok_or("Invalid credential format")?;
+    let password = obj
+        .get("p")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .ok_or("Invalid credential format")?;
+    Ok((username, password))
+}
+
+fn delete_credentials() {
+    if let Ok(entry) = keyring::Entry::new(CREDENTIAL_SERVICE, CREDENTIAL_ACCOUNT) {
+        let _ = entry.delete_password();
+    }
+}
+
 fn build_client_from_cookies(cookies: &str) -> Result<Client, String> {
     let jar = Arc::new(Jar::default());
     let portal_url: Url = PORTAL_URL.parse().unwrap();
@@ -229,54 +270,12 @@ async fn api_get(
         .map_err(|e| format!("Invalid JSON: {e}"))
 }
 
-// ── Command: try_restore_session ────────────────────────────────────
+// ── Core login logic (shared by login and auto-restore) ───────────────
 
-#[tauri::command]
-async fn try_restore_session(app: tauri::AppHandle) -> Result<Value, String> {
-    let path = session_path(&app)?;
-    let data = std::fs::read_to_string(&path).map_err(|_| "No saved session".to_string())?;
-    let saved: SavedSession =
-        serde_json::from_str(&data).map_err(|_| "Corrupt session file".to_string())?;
-
-    if saved.portal_cookies.is_empty() {
-        return Err("Empty session".to_string());
-    }
-
-    let client = build_client_from_cookies(&saved.portal_cookies)?;
-
-    // Verify the session is still valid
-    let student_info = api_get(
-        &client,
-        "/feign/student/student_data",
-        &saved.csrf,
-        &saved.profile_id,
-    )
-    .await
-    .map_err(|_| {
-        delete_session_from_disk(&app);
-        "Session expired".to_string()
-    })?;
-
-    // Session works — store it in memory
-    store_session(
-        &app,
-        SessionData {
-            client,
-            csrf: saved.csrf,
-            profile_id: saved.profile_id,
-        },
-    )?;
-
-    Ok(student_info)
-}
-
-// ── Command: login ──────────────────────────────────────────────────
-
-#[tauri::command]
-async fn login(
+async fn perform_login(
     username: String,
     password: String,
-    app: tauri::AppHandle,
+    app: &tauri::AppHandle,
 ) -> Result<Value, String> {
     let jar = Arc::new(Jar::default());
     let client = Client::builder()
@@ -363,10 +362,81 @@ async fn login(
         api_get(&client, "/feign/student/student_data", &csrf, &profile_id).await?;
 
     // 8. Save session to disk (cookies + CSRF + profile)
-    let _ = save_session_to_disk(&app, &jar, &csrf, &profile_id);
+    let _ = save_session_to_disk(app, &jar, &csrf, &profile_id);
 
     // 9. Store in memory
-    store_session(&app, SessionData { client, csrf, profile_id })?;
+    store_session(app, SessionData { client, csrf, profile_id })?;
+
+    Ok(student_info)
+}
+
+// ── Command: try_restore_session ────────────────────────────────────
+
+#[tauri::command]
+async fn try_restore_session(app: tauri::AppHandle) -> Result<Value, String> {
+    // First try: restore from saved session (cookies)
+    if let Ok(path) = session_path(&app) {
+        if let Ok(data) = std::fs::read_to_string(&path) {
+            if let Ok(saved) = serde_json::from_str::<SavedSession>(&data) {
+                if !saved.portal_cookies.is_empty() {
+                    if let Ok(client) = build_client_from_cookies(&saved.portal_cookies) {
+                        if let Ok(student_info) = api_get(
+                            &client,
+                            "/feign/student/student_data",
+                            &saved.csrf,
+                            &saved.profile_id,
+                        )
+                        .await
+                        {
+                            store_session(
+                                &app,
+                                SessionData {
+                                    client,
+                                    csrf: saved.csrf,
+                                    profile_id: saved.profile_id,
+                                },
+                            )?;
+                            return Ok(student_info);
+                        }
+                    }
+                    delete_session_from_disk(&app);
+                }
+            }
+        }
+    }
+
+    // Second try: auto re-login with stored credentials (OS keychain)
+    if let Ok((username, password)) = load_credentials() {
+        match perform_login(username, password, &app).await {
+            Ok(info) => return Ok(info),
+            Err(_) => {
+                // Credentials may have changed; remove stored ones
+                delete_credentials();
+            }
+        }
+    }
+
+    Err("No valid session. Please sign in.".to_string())
+}
+
+// ── Command: login ──────────────────────────────────────────────────
+
+#[derive(serde::Deserialize)]
+struct LoginArgs {
+    username: String,
+    password: String,
+    #[serde(default)]
+    remember_me: bool,
+}
+
+#[tauri::command]
+async fn login(args: LoginArgs, app: tauri::AppHandle) -> Result<Value, String> {
+    let student_info =
+        perform_login(args.username.clone(), args.password.clone(), &app).await?;
+
+    if args.remember_me {
+        let _ = save_credentials(&args.username, &args.password);
+    }
 
     Ok(student_info)
 }
@@ -454,6 +524,7 @@ fn set_background_check_minutes(app: tauri::AppHandle, value: u32) -> Result<(),
 #[tauri::command]
 fn logout(app: tauri::AppHandle) -> Result<(), String> {
     delete_session_from_disk(&app);
+    delete_credentials();
     let state = app.state::<AppState>();
     let mut guard = state.session.lock().map_err(|e| e.to_string())?;
     *guard = None;

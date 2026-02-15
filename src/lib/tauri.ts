@@ -32,9 +32,15 @@ export async function tryRestoreSession(): Promise<StudentInfo | null> {
   }
 }
 
-export async function login(username: string, password: string): Promise<StudentInfo> {
+export async function login(
+  username: string,
+  password: string,
+  rememberMe = false
+): Promise<StudentInfo> {
   requireTauri();
-  return invoke<StudentInfo>("login", { username, password });
+  return invoke<StudentInfo>("login", {
+    args: { username, password, remember_me: rememberMe },
+  });
 }
 
 export async function getStudentInfo(): Promise<StudentInfo> {

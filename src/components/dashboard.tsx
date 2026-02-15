@@ -12,6 +12,9 @@ import {
   Sun01Icon,
   PanelRightCloseIcon,
   GraduationScrollIcon,
+  InformationCircleIcon,
+  Download01Icon,
+  Github01Icon,
 } from "@hugeicons/core-free-icons";
 import {
   getGrades,
@@ -32,9 +35,25 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Tooltip as UITooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
+import { Input } from "@/components/ui/input";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
+import { useWindowSize } from "@/hooks/use-window-size";
 import type { StudentInfo, GradeRecord } from "@/types";
 import {
   studentDisplayName,
@@ -119,12 +138,32 @@ function attemptSortKey(g: GradeRecord): [number, string, number] {
 
 // ── Build grouped data ──────────────────────────────────────────────
 
+type CourseSort = "grade" | "name" | "ects";
+type FilterStatus = "all" | "passed" | "failed";
+
+interface SemesterGpa {
+  semester: number;
+  gpa: number;
+  passedCount: number;
+  totalCount: number;
+}
+
+interface GradeTrendPoint {
+  semester: number;
+  label: string;
+  gpa: number;
+  passedCount: number;
+}
+
 function buildSemesters(grades: GradeRecord[]): {
   semesters: SemesterSection[];
   passedCourses: CourseGroup[];
+  failedCourses: CourseGroup[];
   passedEcts: number;
   avg: string;
   best: CourseGroup | null;
+  semesterGpas: SemesterGpa[];
+  gradeTrendData: GradeTrendPoint[];
 } {
   // Remember original order so sorting can fall back to it
   const indexMap = new Map<GradeRecord, number>();
@@ -188,7 +227,29 @@ function buildSemesters(grades: GradeRecord[]): {
     }));
 
   const passedCourses = allCourses.filter((c) => c.passed);
+  const failedCourses = allCourses.filter((c) => !c.passed);
   const passedEcts = passedCourses.reduce((s, c) => s + (c.ects ?? 0), 0);
+
+  const semesterGpas: SemesterGpa[] = semesters.map(({ semester, courses }) => {
+    const passed = courses.filter((c) => c.passed);
+    const sum = passed.reduce((s, c) => s + (gradeValue(c.current) ?? 0), 0);
+    const gpa = passed.length > 0 ? sum / passed.length : 0;
+    return {
+      semester,
+      gpa,
+      passedCount: passed.length,
+      totalCount: courses.length,
+    };
+  });
+
+  const gradeTrendData: GradeTrendPoint[] = semesterGpas
+    .filter((s) => s.passedCount > 0)
+    .map((s) => ({
+      semester: s.semester,
+      label: s.semester === 0 ? "Other" : `Sem ${s.semester}`,
+      gpa: Math.round(s.gpa * 100) / 100,
+      passedCount: s.passedCount,
+    }));
 
   const avg =
     passedCourses.length > 0
@@ -206,7 +267,16 @@ function buildSemesters(grades: GradeRecord[]): {
       )
     : null;
 
-  return { semesters, passedCourses, passedEcts, avg, best };
+  return {
+    semesters,
+    passedCourses,
+    failedCourses,
+    passedEcts,
+    avg,
+    best,
+    semesterGpas,
+    gradeTrendData,
+  };
 }
 
 // ── Component ───────────────────────────────────────────────────────
@@ -222,7 +292,20 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
   const [keepInTray, setKeepInTrayState] = useState(false);
   const [backgroundCheckMinutes, setBackgroundCheckMinutesState] = useState(5);
   const [statsExpanded, setStatsExpanded] = useState<Set<string>>(new Set());
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterStatus, setFilterStatus] = useState<FilterStatus>("all");
+  const [courseSort, setCourseSort] = useState<CourseSort>("grade");
+  const [collapsedSemesters, setCollapsedSemesters] = useState<Set<number>>(new Set());
+  const [aboutOpen, setAboutOpen] = useState(false);
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
+  const [lastRefreshAt, setLastRefreshAt] = useState<Date | null>(null);
+  const [refreshOnFocus, setRefreshOnFocus] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem("refreshOnFocus") === "true";
+  });
+  const [, setTick] = useState(0);
   const gradesRef = useRef<GradeRecord[]>([]);
+  const { width: windowWidth } = useWindowSize();
   const { theme, toggle: toggleTheme } = useTheme();
   const { t, locale, setLocale } = useLocale();
 
@@ -294,8 +377,9 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
         showToast: true,
         showNotification: true,
       });
+      setGrades(data);
+      setLastRefreshAt(new Date());
       if (!hadNew) {
-        setGrades(data);
         setShowRefreshedToast(true);
         setTimeout(() => setShowRefreshedToast(false), 2500);
       }
@@ -314,7 +398,10 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
 
   useEffect(() => {
     getGrades()
-      .then(setGrades)
+      .then((data) => {
+        setGrades(data);
+        setLastRefreshAt(new Date());
+      })
       .catch(console.error)
       .finally(() => setLoading(false));
   }, []);
@@ -345,6 +432,7 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
           }
           if (newKeys.size > 0) {
             setGrades(data);
+            setLastRefreshAt(new Date());
             setNewCourseKeys(newKeys);
             setTimeout(() => setNewCourseKeys(new Set()), 30000);
             const brandNewCourses = newIds.filter(
@@ -393,10 +481,104 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
     await setBackgroundCheckMinutes(mins);
   }
 
-  const { semesters, passedCourses, passedEcts, avg, best } = useMemo(
-    () => buildSemesters(grades),
-    [grades]
+  const {
+    semesters,
+    passedCourses,
+    failedCourses,
+    passedEcts,
+    avg,
+    best,
+    semesterGpas,
+    gradeTrendData,
+  } = useMemo(() => buildSemesters(grades), [grades]);
+
+  const semesterGpaMap = useMemo(
+    () => new Map(semesterGpas.map((s) => [s.semester, s])),
+    [semesterGpas]
   );
+
+  function formatLastUpdated(): string {
+    if (!lastRefreshAt) return t("updatedNow");
+    const sec = Math.floor((Date.now() - lastRefreshAt.getTime()) / 1000);
+    if (sec < 60) return t("updatedNow");
+    const min = Math.floor(sec / 60);
+    if (min < 60) return t("updatedMinutes", { n: min });
+    const h = Math.floor(min / 60);
+    if (h < 24) return t("updatedHours", { n: h });
+    return t("updatedDays", { n: Math.floor(h / 24) });
+  }
+
+  function matchesSearch(course: CourseGroup): boolean {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase().trim();
+    return (
+      course.name.toLowerCase().includes(q) ||
+      course.code.toLowerCase().includes(q)
+    );
+  }
+
+  function matchesFilter(course: CourseGroup): boolean {
+    if (filterStatus === "all") return true;
+    if (filterStatus === "passed") return course.passed;
+    return !course.passed;
+  }
+
+  function sortCourses(courses: CourseGroup[]): CourseGroup[] {
+    const arr = [...courses];
+    if (courseSort === "grade") {
+      arr.sort((a, b) => {
+        const va = gradeValue(a.current) ?? -1;
+        const vb = gradeValue(b.current) ?? -1;
+        return vb - va;
+      });
+    } else if (courseSort === "name") {
+      arr.sort((a, b) => a.name.localeCompare(b.name));
+    } else {
+      arr.sort((a, b) => (b.ects ?? 0) - (a.ects ?? 0));
+    }
+    return arr;
+  }
+
+  function exportCsv() {
+    const rows: string[][] = [
+      ["Course", "Code", "Grade", "ECTS", "Semester", "Status", "Period"],
+    ];
+    for (const section of semesters) {
+      for (const c of section.courses) {
+        rows.push([
+          `"${courseName(c.current).replace(/"/g, '""')}"`,
+          `"${courseCode(c.current).replace(/"/g, '""')}"`,
+          String(gradeValue(c.current) ?? "—"),
+          String(c.ects ?? "—"),
+          String(section.semester),
+          c.passed ? "Passed" : "Failed",
+          `"${examPeriodDisplay(c.current).replace(/"/g, '""')}"`,
+        ]);
+      }
+    }
+    const csv = rows.map((r) => r.join(",")).join("\n");
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `uom-grades-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function toggleSemesterCollapse(sem: number) {
+    setCollapsedSemesters((prev) => {
+      const next = new Set(prev);
+      if (next.has(sem)) next.delete(sem);
+      else next.add(sem);
+      return next;
+    });
+  }
+
+  function handleRefreshOnFocusChange(checked: boolean) {
+    setRefreshOnFocus(checked);
+    localStorage.setItem("refreshOnFocus", String(checked));
+  }
 
   const name = studentDisplayName(studentInfo);
   const sid = studentId(studentInfo);
@@ -427,9 +609,52 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
   }
 
   async function handleLogout() {
+    setLogoutConfirmOpen(false);
     await tauriLogout();
     onLogout();
   }
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.key === "r" || e.key === "R") {
+        if (!refreshing) {
+          e.preventDefault();
+          handleRefresh();
+        }
+      } else if (e.key === "s" || e.key === "S") {
+        if (!e.ctrlKey && !e.metaKey) {
+          e.preventDefault();
+          setSettingsOpen((v) => !v);
+        }
+      } else if (e.key === "Escape") {
+        setSettingsOpen(false);
+        setAboutOpen(false);
+        setLogoutConfirmOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [refreshing]);
+
+  useEffect(() => {
+    if (!refreshOnFocus) return;
+    const onFocus = () => {
+      checkForNewGrades(gradesRef.current, { showNotification: true }).then(
+        ({ data, hadNew }) => {
+          if (hadNew) setGrades(data);
+        }
+      );
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [refreshOnFocus]);
+
+  useEffect(() => {
+    if (!lastRefreshAt) return;
+    const id = setInterval(() => setTick((n) => n + 1), 60000);
+    return () => clearInterval(id);
+  }, [lastRefreshAt]);
 
   return (
     <motion.div
@@ -441,8 +666,8 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
     >
       {/* ── Header ─────────────────────────────────────────────── */}
       <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
-        <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
-          <div className="flex items-center gap-4">
+        <div className="mx-auto flex w-full max-w-5xl flex-col gap-4 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 xl:max-w-6xl 2xl:max-w-7xl">
+          <div className="flex min-w-0 items-center gap-4">
             <div className="rounded-xl bg-primary/10 p-2.5 ring-1 ring-primary/10 dark:ring-primary/20">
               <HugeiconsIcon
                 icon={GraduationScrollIcon}
@@ -465,31 +690,41 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             {/* Refresh */}
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={handleRefresh}
-              disabled={refreshing}
-              aria-label={t("refresh")}
-            >
-              <HugeiconsIcon
-                icon={ArrowReloadHorizontalIcon}
-                size={16}
-                className={refreshing ? "animate-spin" : ""}
-              />
-            </Button>
+            <UITooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={handleRefresh}
+                  disabled={refreshing}
+                  aria-label={t("refresh")}
+                >
+                  <HugeiconsIcon
+                    icon={ArrowReloadHorizontalIcon}
+                    size={16}
+                    className={refreshing ? "animate-spin" : ""}
+                  />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t("tooltipRefresh")}</TooltipContent>
+            </UITooltip>
             {/* Settings toggle */}
             <div className="relative">
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setSettingsOpen((v) => !v)}
-                aria-label={t("settings")}
-              >
-                <HugeiconsIcon icon={Settings01Icon} size={16} />
-              </Button>
+              <UITooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setSettingsOpen((v) => !v)}
+                    aria-label={t("settings")}
+                  >
+                    <HugeiconsIcon icon={Settings01Icon} size={16} />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t("tooltipSettings")}</TooltipContent>
+              </UITooltip>
 
               {/* Settings dropdown */}
               <AnimatePresence>
@@ -586,6 +821,15 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
                             </SelectContent>
                           </Select>
                         </div>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 text-sm">
+                            <span>{t("refreshOnFocus")}</span>
+                          </div>
+                          <Switch
+                            checked={refreshOnFocus}
+                            onCheckedChange={handleRefreshOnFocusChange}
+                          />
+                        </div>
                       </div>
                     </motion.div>
                   </>
@@ -593,19 +837,37 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
               </AnimatePresence>
             </div>
 
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleLogout}
-              className="rounded-lg hover:border-red-500/50 hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400"
-            >
-              {t("signOut")}
-            </Button>
+            <UITooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setAboutOpen(true)}
+                  aria-label={t("about")}
+                >
+                  <HugeiconsIcon icon={InformationCircleIcon} size={16} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t("tooltipAbout")}</TooltipContent>
+            </UITooltip>
+            <UITooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setLogoutConfirmOpen(true)}
+                  className="rounded-lg hover:border-red-500/50 hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400"
+                >
+                  {t("signOut")}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t("tooltipSignOut")}</TooltipContent>
+            </UITooltip>
           </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-5xl px-6 py-8 space-y-8">
+        <main className="mx-auto w-full max-w-5xl min-w-0 px-4 py-8 space-y-8 sm:px-6 xl:max-w-6xl 2xl:max-w-7xl">
         {/* ── Summary cards (equal height) ────────────────────── */}
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           {[
@@ -682,6 +944,144 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
           ))}
         </div>
 
+        {/* ── Toolbar: search, filter, sort, export, last updated ─── */}
+        {!loading && grades.length > 0 && (
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-1 flex-col gap-3 sm:flex-row sm:items-center">
+              <Input
+                placeholder={t("searchPlaceholder")}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="max-w-xs"
+              />
+              <div className="flex flex-wrap gap-2">
+                {(["all", "passed", "failed"] as const).map((f) => (
+                  <UITooltip key={f}>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        onClick={() => setFilterStatus(f)}
+                        className={`rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                          filterStatus === f
+                            ? "bg-primary text-primary-foreground"
+                            : "bg-muted hover:bg-muted/80"
+                        }`}
+                      >
+                        {t(`filter${f.charAt(0).toUpperCase() + f.slice(1)}`)}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>{t(`tooltipFilter${f.charAt(0).toUpperCase() + f.slice(1)}`)}</TooltipContent>
+                  </UITooltip>
+                ))}
+              </div>
+              <UITooltip>
+                <TooltipTrigger asChild>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground">{t("sortBy")}:</span>
+                    <Select
+                      value={courseSort}
+                      onValueChange={(v) => setCourseSort(v as CourseSort)}
+                    >
+                      <SelectTrigger className="w-28">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="grade">{t("sortGrade")}</SelectItem>
+                        <SelectItem value="name">{t("sortName")}</SelectItem>
+                        <SelectItem value="ects">{t("sortEcts")}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>{t("tooltipSortBy")}</TooltipContent>
+              </UITooltip>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-muted-foreground">{formatLastUpdated()}</span>
+              <UITooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="outline" size="sm" onClick={exportCsv}>
+                    <HugeiconsIcon icon={Download01Icon} size={14} className="mr-1.5" />
+                    {t("exportGrades")}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t("tooltipExport")}</TooltipContent>
+              </UITooltip>
+            </div>
+          </div>
+        )}
+
+        {/* ── Failed courses section ───────────────────────────── */}
+        {!loading && failedCourses.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="rounded-xl border border-red-200 bg-red-500/5 dark:border-red-900/50 dark:bg-red-500/10 p-4"
+          >
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-red-700 dark:text-red-400 mb-3">
+              {t("failedCourses")} ({failedCourses.length})
+            </h2>
+            <div className="flex flex-wrap gap-2">
+              {failedCourses.map((c) => (
+                <span
+                  key={c.key}
+                  className="inline-flex items-center rounded-lg bg-red-500/15 px-3 py-1.5 text-sm font-medium text-red-700 dark:text-red-300"
+                >
+                  {c.name} ({c.code}) · {gradeValue(c.current) ?? "—"}
+                </span>
+              ))}
+            </div>
+          </motion.div>
+        )}
+
+        {/* ── Grade trend chart ─────────────────────────────────── */}
+        {!loading && gradeTrendData.length > 1 && (
+          <Card className="overflow-hidden border-0 shadow-md shadow-black/5 dark:shadow-black/15 ring-1 ring-border/50">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
+                {t("gradeTrend")}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="h-[180px] w-full min-w-0" key={windowWidth}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={gradeTrendData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" className="opacity-40" stroke="hsl(var(--border))" />
+                    <XAxis dataKey="label" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
+                    <YAxis
+                      domain={[0, 10]}
+                      tick={{ fontSize: 11 }}
+                      tickLine={false}
+                      axisLine={false}
+                      allowDecimals={false}
+                    />
+                    <Tooltip
+                      content={({ active, payload }) => {
+                        if (!active || !payload?.[0]) return null;
+                        const d = payload[0].payload as GradeTrendPoint;
+                        return (
+                          <div className="rounded-lg border border-border/60 bg-popover px-3 py-2 text-sm shadow-lg ring-1 ring-border/30">
+                            <p className="font-semibold">{d.label}</p>
+                            <p className="text-muted-foreground text-xs">GPA: {d.gpa}</p>
+                          </div>
+                        );
+                      }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="gpa"
+                      stroke="hsl(var(--primary))"
+                      strokeWidth={2}
+                      dot={{ r: 4 }}
+                      activeDot={{ r: 6 }}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* ── Semesters ────────────────────────────────────────── */}
         {loading ? (
           <motion.div
@@ -719,24 +1119,51 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.5 + si * 0.08 }}
               >
-                {/* ── Semester divider ──────────────────────── */}
-                <div className="flex items-center gap-4 mb-4">
+                {/* ── Semester divider (collapsible) ───────────── */}
+                <button
+                  type="button"
+                  onClick={() => toggleSemesterCollapse(section.semester)}
+                  className="flex items-center gap-4 mb-4 w-full group"
+                >
                   <Separator className="flex-1" />
-                  <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">
+                  <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap flex items-center gap-2">
                     {semesterLabel(section.semester)}
+                    {semesterGpaMap.get(section.semester) && (
+                      <span className="text-xs font-normal normal-case">
+                        (GPA: {semesterGpaMap.get(section.semester)!.gpa.toFixed(2)})
+                      </span>
+                    )}
+                    <HugeiconsIcon
+                      icon={ArrowDown01Icon}
+                      size={14}
+                      className={`transition-transform duration-200 ${
+                        collapsedSemesters.has(section.semester) ? "-rotate-90" : "rotate-0"
+                      }`}
+                    />
                   </h2>
                   <Separator className="flex-1" />
-                </div>
+                </button>
 
-                <Card className="overflow-hidden border-0 shadow-md shadow-black/5 dark:shadow-black/15 ring-1 ring-border/50">
-                  {/* Table headers */}
-                  <div className="hidden sm:grid grid-cols-[1fr_80px_80px] items-center gap-3 px-4 py-3.5 text-xs font-medium uppercase tracking-wider text-muted-foreground border-b bg-muted/40">
-                    <span>{t("course")}</span>
-                    <span className="text-right">{t("grade")}</span>
-                    <span className="text-right">{t("ects")}</span>
-                  </div>
-                  <div className="divide-y">
-                    {section.courses.map((course) => {
+                <AnimatePresence>
+                  {!collapsedSemesters.has(section.semester) && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: "auto", opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="overflow-hidden"
+                    >
+                      <Card className="overflow-hidden border-0 shadow-md shadow-black/5 dark:shadow-black/15 ring-1 ring-border/50">
+                        {/* Table headers */}
+                        <div className="hidden sm:grid grid-cols-[1fr_80px_80px] items-center gap-3 px-4 py-3.5 text-xs font-medium uppercase tracking-wider text-muted-foreground border-b bg-muted/40">
+                          <span>{t("course")}</span>
+                          <span className="text-right">{t("grade")}</span>
+                          <span className="text-right">{t("ects")}</span>
+                        </div>
+                        <div className="divide-y">
+                          {sortCourses(
+                            section.courses.filter(matchesSearch).filter(matchesFilter)
+                          ).map((course) => {
                       const hasHistory = course.attempts.length > 1;
                       const isOpen = expanded.has(course.key);
                       const isNew = newCourseKeys.has(course.key);
@@ -900,14 +1327,107 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
                           </AnimatePresence>
                         </div>
                       );
-                    })}
-                  </div>
-                </Card>
+                          })}
+                        </div>
+                      </Card>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </motion.div>
             ))}
           </div>
         )}
       </main>
+
+      {/* About modal */}
+      <AnimatePresence>
+        {aboutOpen && (
+          <>
+            <div
+              className="fixed inset-0 z-40 bg-black/40"
+              onClick={() => setAboutOpen(false)}
+            />
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.96 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.96 }}
+                className="w-full max-w-md rounded-xl border bg-popover p-6 shadow-xl ring-1 ring-border/50"
+              >
+              <h3 className="text-lg font-semibold">{t("aboutTitle")}</h3>
+              <p className="mt-2 text-sm text-muted-foreground">
+                {t("aboutVersion", { version: "0.1.0" })}
+              </p>
+              <p className="mt-3 text-sm text-muted-foreground">
+                {t("aboutPrivacy")}
+              </p>
+              <p className="mt-2 text-xs text-muted-foreground italic">
+                {t("aboutNotAffiliated")}
+              </p>
+              <div className="mt-4 flex flex-wrap gap-3">
+                <a
+                  href="https://github.com/daglaroglou/uom-grades"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm font-medium hover:bg-muted transition-colors"
+                >
+                  <HugeiconsIcon icon={Github01Icon} size={18} />
+                  {t("viewOnGitHub")}
+                </a>
+                <a
+                  href="https://sis-portal.uom.gr"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm font-medium hover:bg-muted transition-colors"
+                >
+                  {t("aboutPortal")} →
+                </a>
+              </div>
+              <div className="mt-6 flex justify-end">
+                <Button onClick={() => setAboutOpen(false)}>{t("confirm")}</Button>
+              </div>
+              </motion.div>
+            </div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Logout confirmation */}
+      <AnimatePresence>
+        {logoutConfirmOpen && (
+          <>
+            <div
+              className="fixed inset-0 z-40 bg-black/40"
+              onClick={() => setLogoutConfirmOpen(false)}
+            />
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.96 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.96 }}
+                className="w-full max-w-sm rounded-xl border bg-popover p-6 shadow-xl ring-1 ring-border/50"
+              >
+              <h3 className="text-lg font-semibold">{t("confirmLogout")}</h3>
+              <p className="mt-2 text-sm text-muted-foreground">
+                {t("confirmLogoutDetail")}
+              </p>
+              <div className="mt-6 flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setLogoutConfirmOpen(false)}>
+                  {t("cancel")}
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={handleLogout}
+                  className="hover:bg-red-600"
+                >
+                  {t("signOut")}
+                </Button>
+              </div>
+              </motion.div>
+            </div>
+          </>
+        )}
+      </AnimatePresence>
 
       {/* Refresh notification */}
       <AnimatePresence>
