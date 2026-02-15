@@ -179,6 +179,7 @@ fn delete_session_from_disk(app: &tauri::AppHandle) {
 const CREDENTIAL_SERVICE: &str = "uom-grades";
 const CREDENTIAL_ACCOUNT: &str = "login";
 
+#[cfg(desktop)]
 fn save_credentials(username: &str, password: &str) -> Result<(), String> {
     let entry = keyring::Entry::new(CREDENTIAL_SERVICE, CREDENTIAL_ACCOUNT)
         .map_err(|e| format!("Keychain error: {e}"))?;
@@ -188,6 +189,12 @@ fn save_credentials(username: &str, password: &str) -> Result<(), String> {
         .map_err(|e| format!("Failed to save credentials: {e}"))
 }
 
+#[cfg(not(desktop))]
+fn save_credentials(_username: &str, _password: &str) -> Result<(), String> {
+    Ok(()) // Keychain not available on mobile
+}
+
+#[cfg(desktop)]
 fn load_credentials() -> Result<(String, String), String> {
     let entry = keyring::Entry::new(CREDENTIAL_SERVICE, CREDENTIAL_ACCOUNT)
         .map_err(|e| format!("Keychain error: {e}"))?;
@@ -209,10 +216,21 @@ fn load_credentials() -> Result<(String, String), String> {
     Ok((username, password))
 }
 
+#[cfg(not(desktop))]
+fn load_credentials() -> Result<(String, String), String> {
+    Err("Keychain not available on mobile".to_string())
+}
+
+#[cfg(desktop)]
 fn delete_credentials() {
     if let Ok(entry) = keyring::Entry::new(CREDENTIAL_SERVICE, CREDENTIAL_ACCOUNT) {
         let _ = entry.delete_password();
     }
+}
+
+#[cfg(not(desktop))]
+fn delete_credentials() {
+    // No-op on mobile
 }
 
 fn build_client_from_cookies(cookies: &str) -> Result<Client, String> {

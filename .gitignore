@@ -24,6 +24,7 @@ yarn-error.log*
 # Local env
 .env*.local
 .env
+upload-keystore.jks
 
 # Vercel
 .vercel
