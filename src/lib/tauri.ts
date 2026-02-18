@@ -122,6 +122,16 @@ export async function logout(): Promise<void> {
   }
 }
 
+/** Returns true if the error indicates session expiry (user needs to re-login). */
+export function isSessionExpiredError(err: unknown): boolean {
+  const msg = String(err ?? "");
+  return (
+    msg.includes("Session expired") ||
+    msg.includes("Not logged in") ||
+    msg.includes("No valid session")
+  );
+}
+
 // ── Settings ───────────────────────────────────────────────────────
 
 export async function getKeepInTray(): Promise<boolean> {

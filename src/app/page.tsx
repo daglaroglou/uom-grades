@@ -52,7 +52,7 @@ export default function Home() {
 
   if (checking) {
     return (
-      <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background">
+      <div className="relative flex min-h-screen min-h-[100dvh] items-center justify-center overflow-hidden bg-background">
         {/* Subtle animated gradient background */}
         <div className="absolute inset-0 -z-10">
           <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-background to-primary/5" />

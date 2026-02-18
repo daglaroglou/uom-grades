@@ -19,11 +19,13 @@ import {
 import {
   getGrades,
   logout as tauriLogout,
+  isSessionExpiredError,
   getKeepInTray,
   setKeepInTray,
   getBackgroundCheckMinutes,
   setBackgroundCheckMinutes,
   openUrl,
+  isMobile,
 } from "@/lib/tauri";
 import { CourseStatsPanel } from "@/components/course-stats-panel";
 import { useTheme } from "@/components/theme-provider";
@@ -300,6 +302,7 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
   const [aboutOpen, setAboutOpen] = useState(false);
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const [lastRefreshAt, setLastRefreshAt] = useState<Date | null>(null);
+  const [isMobileDevice, setIsMobileDevice] = useState(false);
   const [refreshOnFocus, setRefreshOnFocus] = useState(() => {
     if (typeof window === "undefined") return false;
     return localStorage.getItem("refreshOnFocus") === "true";
@@ -385,7 +388,12 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
         setTimeout(() => setShowRefreshedToast(false), 2500);
       }
     } catch (e) {
-      console.error(e);
+      if (isSessionExpiredError(e)) {
+        await tauriLogout();
+        onLogout();
+      } else {
+        console.error(e);
+      }
     } finally {
       setRefreshing(false);
     }
@@ -403,13 +411,21 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
         setGrades(data);
         setLastRefreshAt(new Date());
       })
-      .catch(console.error)
+      .catch(async (e) => {
+        if (isSessionExpiredError(e)) {
+          await tauriLogout();
+          onLogout();
+        } else {
+          console.error(e);
+        }
+      })
       .finally(() => setLoading(false));
   }, []);
 
   useEffect(() => {
     getKeepInTray().then(setKeepInTrayState);
     getBackgroundCheckMinutes().then(setBackgroundCheckMinutesState);
+    isMobile().then(setIsMobileDevice);
   }, []);
 
   gradesRef.current = grades;
@@ -466,7 +482,12 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
               .catch(() => {});
           }
         })
-        .catch(() => {});
+        .catch(async (e) => {
+          if (isSessionExpiredError(e)) {
+            await tauriLogout();
+            onLogout();
+          }
+        });
     }, ms);
     return () => clearInterval(id);
   }, [backgroundCheckMinutes, t]);
@@ -1248,7 +1269,7 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
               >
               <h3 className="text-lg font-semibold">{t("aboutTitle")}</h3>
               <p className="mt-2 text-sm text-muted-foreground">
-                {t("aboutVersion", { version: "0.1.1" })}
+                {t("aboutVersion", { version: "0.1.2" })}
               </p>
               <p className="mt-3 text-sm text-muted-foreground">
                 {t("aboutPrivacy")}
@@ -1342,16 +1363,18 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
                       onCheckedChange={toggleTheme}
                     />
                   </div>
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="flex items-center gap-2 text-sm">
-                      <HugeiconsIcon icon={PanelRightCloseIcon} size={18} />
-                      <span>{t("keepInTray")}</span>
+                  {!isMobileDevice && (
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-2 text-sm">
+                        <HugeiconsIcon icon={PanelRightCloseIcon} size={18} />
+                        <span>{t("keepInTray")}</span>
+                      </div>
+                      <Switch
+                        checked={keepInTray}
+                        onCheckedChange={handleKeepInTrayChange}
+                      />
                     </div>
-                    <Switch
-                      checked={keepInTray}
-                      onCheckedChange={handleKeepInTrayChange}
-                    />
-                  </div>
+                  )}
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                     <span className="text-sm font-medium text-muted-foreground">
                       {t("backgroundCheck")}

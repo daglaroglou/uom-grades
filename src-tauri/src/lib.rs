@@ -307,10 +307,19 @@ async fn api_get(
         .await
         .map_err(|e| format!("Request failed: {e}"))?;
 
+    let status = resp.status().as_u16();
+    if status == 401 || status == 403 {
+        return Err("Session expired. Please sign in again.".to_string());
+    }
+
     let text = resp
         .text()
         .await
         .map_err(|e| format!("Invalid response: {e}"))?;
+    // HTML response (e.g. login page) = session expired
+    if text.trim_start().starts_with('<') {
+        return Err("Session expired. Please sign in again.".to_string());
+    }
     serde_json::from_str(&text).map_err(|e| format!("Invalid JSON: {e}"))
 }
 

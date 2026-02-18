@@ -48,7 +48,7 @@ export function LoginForm({ onLogin }: LoginFormProps) {
   }
 
   return (
-    <div className="page-bg fixed inset-0 flex items-center justify-center overflow-hidden bg-background p-4 pt-[max(0.5rem,env(safe-area-inset-top))] pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+    <div className="page-bg fixed inset-0 flex min-h-[100dvh] items-center justify-center overflow-hidden bg-background p-4 pt-[max(0.5rem,env(safe-area-inset-top))] pb-[max(0.5rem,env(safe-area-inset-bottom))]">
       <motion.div
         initial={{ opacity: 0, y: 24 }}
         animate={{ opacity: 1, y: 0 }}
