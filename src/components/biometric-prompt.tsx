@@ -94,7 +94,7 @@ export function BiometricPrompt({
   }
 
   return (
-    <div className="page-bg fixed inset-0 flex min-h-[100dvh] items-center justify-center overflow-hidden bg-background p-4 pt-[max(0.5rem,env(safe-area-inset-top))] pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+    <div className="page-bg fixed inset-0 flex h-[100dvh] min-h-[100dvh] items-center justify-center overflow-hidden overscroll-none select-none bg-background p-4 pt-[max(0.5rem,env(safe-area-inset-top))] pb-[max(0.5rem,env(safe-area-inset-bottom))]">
       <motion.div
         initial={{ opacity: 0, y: 24 }}
         animate={{ opacity: 1, y: 0 }}

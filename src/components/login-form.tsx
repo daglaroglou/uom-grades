@@ -48,7 +48,7 @@ export function LoginForm({ onLogin }: LoginFormProps) {
   }
 
   return (
-    <div className="page-bg fixed inset-0 flex min-h-[100dvh] items-center justify-center overflow-hidden bg-background p-4 pt-[max(0.5rem,env(safe-area-inset-top))] pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+    <div className="page-bg fixed inset-0 flex h-[100dvh] min-h-[100dvh] items-center justify-center overflow-hidden overscroll-none select-none bg-background p-4 pt-[max(0.5rem,env(safe-area-inset-top))] pb-[max(0.5rem,env(safe-area-inset-bottom))]">
       <motion.div
         initial={{ opacity: 0, y: 24 }}
         animate={{ opacity: 1, y: 0 }}
@@ -98,7 +98,7 @@ export function LoginForm({ onLogin }: LoginFormProps) {
                   onChange={(e) => setUsername(e.target.value)}
                   required
                   autoFocus
-                  className="h-11 rounded-lg border-border/80 bg-muted/30 focus:bg-background transition-colors"
+                  className="h-11 rounded-lg border-border/80 bg-muted/30 focus:bg-background transition-colors select-text"
                 />
               </motion.div>
 
@@ -118,7 +118,7 @@ export function LoginForm({ onLogin }: LoginFormProps) {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
-                  className="h-11 rounded-lg border-border/80 bg-muted/30 focus:bg-background transition-colors"
+                  className="h-11 rounded-lg border-border/80 bg-muted/30 focus:bg-background transition-colors select-text"
                 />
               </motion.div>
 
