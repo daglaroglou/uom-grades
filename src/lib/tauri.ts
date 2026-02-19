@@ -158,6 +158,33 @@ export async function setBackgroundCheckMinutes(value: number): Promise<void> {
   }
 }
 
+export async function getCheckForUpdatesOnStartup(): Promise<boolean> {
+  if (!isTauri()) return true;
+  return invoke<boolean>("get_check_for_updates_on_startup");
+}
+
+export async function setCheckForUpdatesOnStartup(value: boolean): Promise<void> {
+  if (isTauri()) {
+    await invoke("set_check_for_updates_on_startup", { value });
+  }
+}
+
+export interface UpdateInfo {
+  version: string;
+  url: string;
+  notes: string;
+}
+
+/** Check for app updates from GitHub releases. Returns update info if newer version exists. */
+export async function checkForUpdate(): Promise<UpdateInfo | null> {
+  if (!isTauri()) return null;
+  try {
+    return await invoke<UpdateInfo | null>("check_for_update");
+  } catch {
+    return null;
+  }
+}
+
 // ── Opener ──────────────────────────────────────────────────────────
 
 /** Open a URL in the default browser. Uses Tauri opener plugin when available. */

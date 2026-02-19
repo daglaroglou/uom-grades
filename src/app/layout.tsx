@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
 import { LocaleProvider } from "@/components/locale-provider";
+import { ToastProvider } from "@/components/toast-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import "./globals.css";
 
@@ -28,7 +29,9 @@ export default function RootLayout({
       <body className={`${inter.variable} font-sans antialiased`}>
         <ThemeProvider>
           <LocaleProvider>
-            <TooltipProvider delayDuration={300}>{children}</TooltipProvider>
+            <ToastProvider>
+              <TooltipProvider delayDuration={300}>{children}</TooltipProvider>
+            </ToastProvider>
           </LocaleProvider>
         </ThemeProvider>
       </body>

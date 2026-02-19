@@ -32,10 +32,16 @@ pub struct AppSettings {
     pub keep_in_tray: bool,
     #[serde(default = "default_background_check_minutes")]
     pub background_check_minutes: u32,
+    #[serde(default = "default_check_for_updates_on_startup")]
+    pub check_for_updates_on_startup: bool,
 }
 
 fn default_background_check_minutes() -> u32 {
     5
+}
+
+fn default_check_for_updates_on_startup() -> bool {
+    true
 }
 
 impl Default for AppSettings {
@@ -43,6 +49,7 @@ impl Default for AppSettings {
         Self {
             keep_in_tray: false,
             background_check_minutes: 5,
+            check_for_updates_on_startup: true,
         }
     }
 }
@@ -626,6 +633,104 @@ fn set_background_check_minutes(app: tauri::AppHandle, value: u32) -> Result<(),
     save_settings(&app, &*guard)
 }
 
+// ── Command: get_check_for_updates_on_startup ────────────────────────
+
+#[tauri::command]
+fn get_check_for_updates_on_startup(app: tauri::AppHandle) -> Result<bool, String> {
+    let state = app.state::<AppState>();
+    let guard = state.settings.lock().map_err(|e| e.to_string())?;
+    Ok(guard.check_for_updates_on_startup)
+}
+
+// ── Command: set_check_for_updates_on_startup ────────────────────────
+
+#[tauri::command]
+fn set_check_for_updates_on_startup(app: tauri::AppHandle, value: bool) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let mut guard = state.settings.lock().map_err(|e| e.to_string())?;
+    guard.check_for_updates_on_startup = value;
+    save_settings(&app, &*guard)
+}
+
+// ── Command: check_for_update ───────────────────────────────────────
+// Fetches latest release from GitHub and compares with current version.
+// Returns update info if a newer version exists.
+
+const GITHUB_RELEASES_URL: &str =
+    "https://api.github.com/repos/daglaroglou/uom-grades/releases/latest";
+
+#[derive(serde::Serialize)]
+struct UpdateInfo {
+    version: String,
+    url: String,
+    notes: String,
+}
+
+fn parse_version(v: &str) -> (u32, u32, u32) {
+    let v = v.trim_start_matches('v');
+    let parts: Vec<&str> = v.split('.').collect();
+    let major = parts.get(0).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let minor = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let patch = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+    (major, minor, patch)
+}
+
+fn version_gt(current: &str, latest: &str) -> bool {
+    let (cmaj, cmin, cpatch) = parse_version(current);
+    let (lmaj, lmin, lpatch) = parse_version(latest);
+    lmaj > cmaj || (lmaj == cmaj && lmin > cmin) || (lmaj == cmaj && lmin == cmin && lpatch > cpatch)
+}
+
+#[tauri::command]
+async fn check_for_update(app: tauri::AppHandle) -> Result<Option<UpdateInfo>, String> {
+    let current = app.package_info().version.to_string();
+    let client = Client::builder()
+        .user_agent("UoM-Grades-Updater/1.0")
+        .build()
+        .map_err(|e| format!("HTTP client error: {e}"))?;
+
+    let resp = client
+        .get(GITHUB_RELEASES_URL)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to check for updates: {e}"))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("GitHub API returned {}", resp.status()));
+    }
+
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("Invalid response: {e}"))?;
+    let json: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("Invalid JSON: {e}"))?;
+
+    let tag_name = json
+        .get("tag_name")
+        .and_then(|v| v.as_str())
+        .ok_or("No tag_name in release")?;
+    let html_url = json
+        .get("html_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("https://github.com/daglaroglou/uom-grades/releases");
+    let body = json
+        .get("body")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    let latest_version = tag_name.trim_start_matches('v').to_string();
+    if !version_gt(&current, &latest_version) {
+        return Ok(None);
+    }
+
+    Ok(Some(UpdateInfo {
+        version: latest_version,
+        url: html_url.to_string(),
+        notes: body.to_string(),
+    }))
+}
+
 // ── Command: logout ─────────────────────────────────────────────────
 
 #[tauri::command]
@@ -670,7 +775,10 @@ pub fn run() {
             get_keep_in_tray,
             set_keep_in_tray,
             get_background_check_minutes,
-            set_background_check_minutes
+            set_background_check_minutes,
+            get_check_for_updates_on_startup,
+            set_check_for_updates_on_startup,
+            check_for_update
         ])
         .setup(|app| {
             // Load settings from disk

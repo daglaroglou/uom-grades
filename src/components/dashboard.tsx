@@ -6,7 +6,6 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import {
   ArrowDown01Icon,
   ArrowReloadHorizontalIcon,
-  CheckmarkCircle01Icon,
   Settings01Icon,
   Moon01Icon,
   Sun01Icon,
@@ -24,12 +23,16 @@ import {
   setKeepInTray,
   getBackgroundCheckMinutes,
   setBackgroundCheckMinutes,
+  getCheckForUpdatesOnStartup,
+  setCheckForUpdatesOnStartup,
+  checkForUpdate,
   openUrl,
   isMobile,
 } from "@/lib/tauri";
 import { CourseStatsPanel } from "@/components/course-stats-panel";
 import { useTheme } from "@/components/theme-provider";
 import { useLocale } from "@/components/locale-provider";
+import { useToast } from "@/components/toast-provider";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -288,7 +291,6 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
   const [grades, setGrades] = useState<GradeRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [showRefreshedToast, setShowRefreshedToast] = useState(false);
   const [newCourseKeys, setNewCourseKeys] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -301,6 +303,15 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
   const [collapsedSemesters, setCollapsedSemesters] = useState<Set<number>>(new Set());
   const [aboutOpen, setAboutOpen] = useState(false);
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
+  const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState<{
+    version: string;
+    url: string;
+    notes: string;
+  } | null>(null);
+  const [checkForUpdatesOnStartup, setCheckForUpdatesOnStartupState] =
+    useState(true);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [lastRefreshAt, setLastRefreshAt] = useState<Date | null>(null);
   const [isMobileDevice, setIsMobileDevice] = useState(false);
   const [refreshOnFocus, setRefreshOnFocus] = useState(() => {
@@ -312,6 +323,7 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
   const { width: windowWidth } = useWindowSize();
   const { theme, toggle: toggleTheme } = useTheme();
   const { t, locale, setLocale } = useLocale();
+  const { showToast } = useToast();
 
   async function checkForNewGrades(
     currentGrades: GradeRecord[],
@@ -334,7 +346,7 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
       setNewCourseKeys(newKeys);
       setTimeout(() => setNewCourseKeys(new Set()), 30000);
 
-      if (options.showNotification !== false) {
+      if (options.showToast !== false || options.showNotification !== false) {
         const brandNewCourses = newIds.filter(
           (g) => !oldCourseKeys.has(courseCode(g) || courseName(g))
         );
@@ -347,27 +359,22 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
         const newEffortCount = new Set(
           newEfforts.map((g) => courseCode(g) || courseName(g))
         ).size;
-        let body = "";
+        let message = "";
         if (newCourseCount > 0 && newEffortCount > 0) {
-          body = t("newGradesBoth", {
+          message = t("newGradesBoth", {
             courses: newCourseCount,
             efforts: newEffortCount,
           });
         } else if (newCourseCount > 0) {
-          body = t("newGradesCourses", { count: newCourseCount });
+          message = t("newGradesCourses", { count: newCourseCount });
         } else {
-          body = t("newGradesEfforts", { count: newEffortCount });
+          message = t("newGradesEfforts", { count: newEffortCount });
         }
-        import("@tauri-apps/plugin-notification")
-          .then(({ sendNotification }) =>
-            sendNotification({ title: t("newGradesTitle"), body })
-          )
-          .catch(() => {});
-      }
-
-      if (options.showToast) {
-        setShowRefreshedToast(true);
-        setTimeout(() => setShowRefreshedToast(false), 2500);
+        showToast({
+          type: "success",
+          title: t("newGradesTitle"),
+          message,
+        });
       }
     }
 
@@ -384,15 +391,23 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
       setGrades(data);
       setLastRefreshAt(new Date());
       if (!hadNew) {
-        setShowRefreshedToast(true);
-        setTimeout(() => setShowRefreshedToast(false), 2500);
+        const courseCount = new Set(
+          data.map((g) => courseCode(g) || courseName(g))
+        ).size;
+        showToast({
+          type: "success",
+          title: t("refreshed"),
+          message: t("refreshedDetail", { count: courseCount }),
+        });
       }
     } catch (e) {
       if (isSessionExpiredError(e)) {
         await tauriLogout();
         onLogout();
+        showToast({ type: "error", title: t("sessionExpired") });
       } else {
         console.error(e);
+        showToast({ type: "error", title: t("refreshError") });
       }
     } finally {
       setRefreshing(false);
@@ -415,18 +430,48 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
         if (isSessionExpiredError(e)) {
           await tauriLogout();
           onLogout();
+          showToast({ type: "error", title: t("sessionExpired") });
         } else {
           console.error(e);
+          showToast({ type: "error", title: t("refreshError") });
         }
       })
       .finally(() => setLoading(false));
-  }, []);
+  }, [showToast, t]);
 
   useEffect(() => {
-    getKeepInTray().then(setKeepInTrayState);
-    getBackgroundCheckMinutes().then(setBackgroundCheckMinutesState);
-    isMobile().then(setIsMobileDevice);
+    Promise.all([
+      getKeepInTray(),
+      getBackgroundCheckMinutes(),
+      getCheckForUpdatesOnStartup(),
+      isMobile(),
+    ]).then(([keepInTray, bgMins, checkUpdates, mobile]) => {
+      setKeepInTrayState(keepInTray);
+      setBackgroundCheckMinutesState(bgMins);
+      setCheckForUpdatesOnStartupState(checkUpdates);
+      setIsMobileDevice(mobile);
+    });
   }, []);
+
+  const hasCheckedUpdateOnStartup = useRef(false);
+  // Check for updates on startup when enabled (desktop only, once per session)
+  useEffect(() => {
+    if (
+      !isMobileDevice &&
+      checkForUpdatesOnStartup &&
+      !hasCheckedUpdateOnStartup.current
+    ) {
+      hasCheckedUpdateOnStartup.current = true;
+      checkForUpdate()
+        .then((info) => {
+          if (info) {
+            setUpdateInfo(info);
+            setUpdateDialogOpen(true);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [isMobileDevice, checkForUpdatesOnStartup]);
 
   gradesRef.current = grades;
 
@@ -464,33 +509,34 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
             const newEffortCount = new Set(
               newEfforts.map((g) => courseCode(g) || courseName(g))
             ).size;
-            let body = "";
+            let message = "";
             if (newCourseCount > 0 && newEffortCount > 0) {
-              body = t("newGradesBoth", {
+              message = t("newGradesBoth", {
                 courses: newCourseCount,
                 efforts: newEffortCount,
               });
             } else if (newCourseCount > 0) {
-              body = t("newGradesCourses", { count: newCourseCount });
+              message = t("newGradesCourses", { count: newCourseCount });
             } else {
-              body = t("newGradesEfforts", { count: newEffortCount });
+              message = t("newGradesEfforts", { count: newEffortCount });
             }
-            import("@tauri-apps/plugin-notification")
-              .then(({ sendNotification }) =>
-                sendNotification({ title: t("newGradesTitle"), body })
-              )
-              .catch(() => {});
+            showToast({
+              type: "success",
+              title: t("newGradesTitle"),
+              message,
+            });
           }
         })
         .catch(async (e) => {
           if (isSessionExpiredError(e)) {
             await tauriLogout();
             onLogout();
+            showToast({ type: "error", title: t("sessionExpired") });
           }
         });
     }, ms);
     return () => clearInterval(id);
-  }, [backgroundCheckMinutes, t]);
+  }, [backgroundCheckMinutes, t, showToast]);
 
   async function handleKeepInTrayChange(checked: boolean) {
     setKeepInTrayState(checked);
@@ -501,6 +547,29 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
     const mins = Math.max(5, Math.floor(value));
     setBackgroundCheckMinutesState(mins);
     await setBackgroundCheckMinutes(mins);
+  }
+
+  async function handleCheckForUpdatesOnStartupChange(checked: boolean) {
+    setCheckForUpdatesOnStartupState(checked);
+    await setCheckForUpdatesOnStartup(checked);
+  }
+
+  async function handleManualCheckForUpdate() {
+    setCheckingUpdate(true);
+    try {
+      const info = await checkForUpdate();
+      if (info) {
+        setUpdateInfo(info);
+        setUpdateDialogOpen(true);
+      } else {
+        showToast({
+          type: "info",
+          title: t("noUpdatesAvailable"),
+        });
+      }
+    } finally {
+      setCheckingUpdate(false);
+    }
   }
 
   const {
@@ -1404,6 +1473,32 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
                       onCheckedChange={handleRefreshOnFocusChange}
                     />
                   </div>
+                  {!isMobileDevice && (
+                    <>
+                      <div className="flex items-center justify-between gap-4">
+                        <span className="text-sm">
+                          {t("checkForUpdatesOnStartup")}
+                        </span>
+                        <Switch
+                          checked={checkForUpdatesOnStartup}
+                          onCheckedChange={handleCheckForUpdatesOnStartupChange}
+                        />
+                      </div>
+                      <div className="flex items-center justify-between gap-4">
+                        <span className="text-sm">{t("checkForUpdates")}</span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleManualCheckForUpdate}
+                          disabled={checkingUpdate}
+                        >
+                          {checkingUpdate
+                            ? t("checkingForUpdates")
+                            : t("checkForUpdatesButton")}
+                        </Button>
+                      </div>
+                    </>
+                  )}
                 </div>
                 <div className="mt-6 flex justify-end">
                   <Button onClick={() => setSettingsOpen(false)}>
@@ -1413,6 +1508,68 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
               </motion.div>
             </div>
           </>
+        )}
+      </AnimatePresence>
+
+      {/* Update available dialog */}
+      <AnimatePresence>
+        {updateDialogOpen && updateInfo && (
+          <div key="update-dialog" className="contents">
+            <div
+              className="fixed inset-0 z-40 bg-black/40"
+              onClick={() => setUpdateDialogOpen(false)}
+            />
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.96 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.96 }}
+                className="w-full max-w-md rounded-xl border bg-popover p-6 shadow-xl ring-1 ring-border/50"
+              >
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/15">
+                    <HugeiconsIcon
+                      icon={Download01Icon}
+                      size={22}
+                      className="text-primary"
+                    />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold">
+                      {t("updateAvailable")}
+                    </h3>
+                    <p className="text-sm text-muted-foreground">
+                      {t("updateAvailableDetail", {
+                        version: updateInfo.version,
+                      })}
+                    </p>
+                  </div>
+                </div>
+                {updateInfo.notes && (
+                  <div className="mb-4 max-h-32 overflow-y-auto rounded-lg border bg-muted/50 p-3 text-sm text-muted-foreground">
+                    {updateInfo.notes}
+                  </div>
+                )}
+                <div className="flex justify-end gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => setUpdateDialogOpen(false)}
+                  >
+                    {t("later")}
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      openUrl(updateInfo.url);
+                      setUpdateDialogOpen(false);
+                    }}
+                  >
+                    <HugeiconsIcon icon={Download01Icon} size={16} />
+                    {t("downloadUpdate")}
+                  </Button>
+                </div>
+              </motion.div>
+            </div>
+          </div>
         )}
       </AnimatePresence>
 
@@ -1453,44 +1610,6 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
         )}
       </AnimatePresence>
 
-      {/* Refresh notification */}
-      <AnimatePresence>
-        {showRefreshedToast && (
-          <motion.div
-            initial={{ opacity: 0, y: 12, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 8, scale: 0.96 }}
-            transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-            className="fixed bottom-6 right-6 z-50 w-72 overflow-hidden rounded-xl border bg-popover shadow-xl shadow-black/10 dark:shadow-black/30 ring-1 ring-border/50"
-          >
-            <div className="flex items-start gap-3 p-4">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-500/15 dark:bg-emerald-500/20">
-                <HugeiconsIcon
-                  icon={CheckmarkCircle01Icon}
-                  size={20}
-                  className="text-emerald-600 dark:text-emerald-400"
-                />
-              </div>
-              <div className="min-w-0 flex-1 pt-0.5">
-                <p className="font-semibold text-foreground">
-                  {t("refreshed")}
-                </p>
-                <p className="mt-0.5 text-sm text-muted-foreground">
-                  {t("refreshedDetail", {
-                    count: semesters.reduce((n, s) => n + s.courses.length, 0),
-                  })}
-                </p>
-              </div>
-            </div>
-            <motion.div
-              className="h-1 bg-emerald-500/30 dark:bg-emerald-500/40"
-              initial={{ width: "100%" }}
-              animate={{ width: "0%" }}
-              transition={{ duration: 2.5, ease: "linear" }}
-            />
-          </motion.div>
-        )}
-      </AnimatePresence>
     </motion.div>
   );
 }
