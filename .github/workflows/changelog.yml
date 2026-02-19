@@ -42,5 +42,6 @@ jobs:
             echo "No changes to CHANGELOG"
           else
             git commit -m "chore: update CHANGELOG"
+            git pull --rebase origin main
             git push
           fi
