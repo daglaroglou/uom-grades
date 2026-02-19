@@ -1473,32 +1473,28 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
                       onCheckedChange={handleRefreshOnFocusChange}
                     />
                   </div>
-                  {!isMobileDevice && (
-                    <>
-                      <div className="flex items-center justify-between gap-4">
-                        <span className="text-sm">
-                          {t("checkForUpdatesOnStartup")}
-                        </span>
-                        <Switch
-                          checked={checkForUpdatesOnStartup}
-                          onCheckedChange={handleCheckForUpdatesOnStartupChange}
-                        />
-                      </div>
-                      <div className="flex items-center justify-between gap-4">
-                        <span className="text-sm">{t("checkForUpdates")}</span>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={handleManualCheckForUpdate}
-                          disabled={checkingUpdate}
-                        >
-                          {checkingUpdate
-                            ? t("checkingForUpdates")
-                            : t("checkForUpdatesButton")}
-                        </Button>
-                      </div>
-                    </>
-                  )}
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-sm">
+                      {t("checkForUpdatesOnStartup")}
+                    </span>
+                    <Switch
+                      checked={checkForUpdatesOnStartup}
+                      onCheckedChange={handleCheckForUpdatesOnStartupChange}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-sm">{t("checkForUpdates")}</span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleManualCheckForUpdate}
+                      disabled={checkingUpdate}
+                    >
+                      {checkingUpdate
+                        ? t("checkingForUpdates")
+                        : t("checkForUpdatesButton")}
+                    </Button>
+                  </div>
                 </div>
                 <div className="mt-6 flex justify-end">
                   <Button onClick={() => setSettingsOpen(false)}>
