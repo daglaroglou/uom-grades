@@ -7,3 +7,5 @@ Enhance GitHub Actions workflow and improve UI styles
 
 chore: prevent changelog updates from GitHub Actions bot commits
 
+chore: add rebase step before pushing changelog updates in GitHub Actions
+
