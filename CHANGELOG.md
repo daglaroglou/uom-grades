@@ -5,3 +5,5 @@ Enhance GitHub Actions workflow and improve UI styles
 - Implemented a cleanup step for the changelog after releases.
 - Improved global styles to allow text selection in inputs and adjusted component styles for better responsiveness and user experience.
 
+chore: prevent changelog updates from GitHub Actions bot commits
+
