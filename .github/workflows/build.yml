@@ -180,6 +180,8 @@ jobs:
 
       - name: Cleanup Changelog
         run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           > CHANGELOG.md
           git add CHANGELOG.md
           git commit -m "Cleanup Changelog"
