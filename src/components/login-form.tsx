@@ -1,11 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "motion/react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { GraduationScrollIcon } from "@hugeicons/core-free-icons";
 import { useLocale } from "@/components/locale-provider";
 import { login } from "@/lib/tauri";
+import {
+  loadGradesCache,
+  OFFLINE_PLACEHOLDER_STUDENT,
+} from "@/lib/grades-cache";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -20,17 +24,35 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import type { StudentInfo } from "@/types";
 
+const OFFLINE_BUTTON_DELAY_MS = 3000;
+
 interface LoginFormProps {
   onLogin: (info: StudentInfo) => void;
+  onViewOffline?: (info: StudentInfo) => void;
 }
 
-export function LoginForm({ onLogin }: LoginFormProps) {
+export function LoginForm({ onLogin, onViewOffline }: LoginFormProps) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(true);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showOfflineButton, setShowOfflineButton] = useState(false);
   const { t } = useLocale();
+
+  useEffect(() => {
+    if (!loading) {
+      setShowOfflineButton(false);
+      return;
+    }
+    const id = setTimeout(() => {
+      const cache = loadGradesCache();
+      if (cache?.grades?.length && onViewOffline) {
+        setShowOfflineButton(true);
+      }
+    }, OFFLINE_BUTTON_DELAY_MS);
+    return () => clearTimeout(id);
+  }, [loading, onViewOffline]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -162,6 +184,27 @@ export function LoginForm({ onLogin }: LoginFormProps) {
               >
                 {loading ? t("signingIn") : t("signIn")}
               </Button>
+              {showOfflineButton && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="text-muted-foreground hover:text-foreground text-sm"
+                  onClick={() => {
+                    const cache = loadGradesCache();
+                    if (cache?.grades?.length && onViewOffline) {
+                      const info =
+                        cache.studentInfo &&
+                        Object.keys(cache.studentInfo).length > 0
+                          ? cache.studentInfo
+                          : OFFLINE_PLACEHOLDER_STUDENT;
+                      onViewOffline(info);
+                    }
+                  }}
+                >
+                  {t("viewOffline")}
+                </Button>
+              )}
               <p className="text-xs text-muted-foreground text-center">
                 {t("ssoFooter")}
               </p>

@@ -74,6 +74,11 @@
 }
 
 @layer utilities {
+  /* Skip link: visually hidden until focused (accessibility) */
+  .skip-link {
+    @apply sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[110] focus:rounded-lg focus:bg-primary focus:px-4 focus:py-2 focus:text-primary-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2;
+  }
+
   /* Subtle page background for dashboard/content areas */
   .page-bg {
     @apply relative;
@@ -93,3 +98,4 @@
       radial-gradient(ellipse 60% 40% at 0% 100%, hsl(var(--primary) / 0.06), transparent);
   }
 }
+

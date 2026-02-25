@@ -13,6 +13,7 @@ import {
   CheckmarkCircle01Icon,
   AlertCircleIcon,
   InformationCircleIcon,
+  Cancel01Icon,
 } from "@hugeicons/core-free-icons";
 
 export type ToastType = "success" | "error" | "info";
@@ -49,6 +50,10 @@ function ToastItem({
   toast: Toast;
   onDismiss: () => void;
 }) {
+  const handleClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onDismiss();
+  };
   const icon =
     toast.type === "success"
       ? CheckmarkCircle01Icon
@@ -100,6 +105,14 @@ function ToastItem({
             </p>
           )}
         </div>
+        <button
+          type="button"
+          onClick={handleClick}
+          className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+          aria-label="Dismiss"
+        >
+          <HugeiconsIcon icon={Cancel01Icon} size={16} />
+        </button>
       </div>
       <motion.div
         className={`h-1 ${barColor}`}
@@ -131,7 +144,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={{ showToast }}>
       {children}
-      <div className="fixed bottom-6 right-6 z-50 flex flex-col-reverse gap-2 pointer-events-none">
+      <div className="fixed bottom-[max(1.5rem,env(safe-area-inset-bottom))] right-[max(1.5rem,env(safe-area-inset-right))] z-50 flex flex-col-reverse gap-2 pointer-events-none">
         <AnimatePresence mode="popLayout">
           {toasts.map((toast) => (
             <div key={toast.id} className="pointer-events-auto">

@@ -652,6 +652,13 @@ fn set_check_for_updates_on_startup(app: tauri::AppHandle, value: bool) -> Resul
     save_settings(&app, &*guard)
 }
 
+// ── Command: get_app_version ─────────────────────────────────────────
+
+#[tauri::command]
+fn get_app_version(app: tauri::AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
 // ── Command: check_for_update ───────────────────────────────────────
 // Fetches latest release from GitHub and compares with current version.
 // Returns update info if a newer version exists.
@@ -763,6 +770,7 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
+            get_app_version,
             try_restore_session,
             has_stored_credentials,
             try_restore_from_credentials,

@@ -12,8 +12,15 @@ import {
   hasStoredCredentials,
   isMobile,
 } from "@/lib/tauri";
+import {
+  loadGradesCache,
+  OFFLINE_PLACEHOLDER_STUDENT,
+} from "@/lib/grades-cache";
 import { useLocale } from "@/components/locale-provider";
+import { Button } from "@/components/ui/button";
 import type { StudentInfo } from "@/types";
+
+const OFFLINE_BUTTON_DELAY_MS = 3000;
 
 export default function Home() {
   const [studentInfo, setStudentInfo] = useState<StudentInfo | null>(null);
@@ -21,7 +28,32 @@ export default function Home() {
   const [needsBiometric, setNeedsBiometric] = useState(false);
   const [sessionRestoredFromCookies, setSessionRestoredFromCookies] =
     useState(false);
+  const [showOfflineButton, setShowOfflineButton] = useState(false);
   const { t } = useLocale();
+
+  // After delay, show "View offline" if cache has data
+  useEffect(() => {
+    if (!checking) return;
+    const id = setTimeout(() => {
+      const cache = loadGradesCache();
+      if (cache?.grades?.length) {
+        setShowOfflineButton(true);
+      }
+    }, OFFLINE_BUTTON_DELAY_MS);
+    return () => clearTimeout(id);
+  }, [checking]);
+
+  function handleViewOffline() {
+    const cache = loadGradesCache();
+    if (cache?.grades?.length) {
+      setStudentInfo(
+        cache.studentInfo && Object.keys(cache.studentInfo).length > 0
+          ? cache.studentInfo
+          : OFFLINE_PLACEHOLDER_STUDENT
+      );
+      setChecking(false);
+    }
+  }
 
   // Try to restore a saved session on launch
   useEffect(() => {
@@ -140,6 +172,23 @@ export default function Home() {
               }}
             />
           </motion.div>
+
+          {showOfflineButton && (
+            <motion.div
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mt-6"
+            >
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleViewOffline}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                {t("viewOffline")}
+              </Button>
+            </motion.div>
+          )}
         </motion.div>
       </div>
     );
@@ -159,7 +208,11 @@ export default function Home() {
             sessionRestoredFromCookies={sessionRestoredFromCookies}
           />
         ) : (
-          <LoginForm key="login" onLogin={setStudentInfo} />
+          <LoginForm
+            key="login"
+            onLogin={setStudentInfo}
+            onViewOffline={setStudentInfo}
+          />
         )
       ) : (
         <Dashboard

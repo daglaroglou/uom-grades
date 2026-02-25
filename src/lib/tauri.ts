@@ -175,6 +175,16 @@ export interface UpdateInfo {
   notes: string;
 }
 
+/** Get the current app version (from package.json). */
+export async function getAppVersion(): Promise<string> {
+  if (!isTauri()) return "0.1.3"; // fallback for web
+  try {
+    return await invoke<string>("get_app_version");
+  } catch {
+    return "0.1.3";
+  }
+}
+
 /** Check for app updates from GitHub releases. Returns update info if newer version exists. */
 export async function checkForUpdate(): Promise<UpdateInfo | null> {
   if (!isTauri()) return null;

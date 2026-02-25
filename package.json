@@ -1,6 +1,6 @@
 {
   "name": "uom-grades",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "Student grade tracking desktop app for University of Macedonia",
   "scripts": {

@@ -14,9 +14,12 @@ import {
   InformationCircleIcon,
   Download01Icon,
   Github01Icon,
+  HelpCircleIcon,
+  Cancel01Icon,
 } from "@hugeicons/core-free-icons";
 import {
   getGrades,
+  getAppVersion,
   logout as tauriLogout,
   isSessionExpiredError,
   getKeepInTray,
@@ -30,6 +33,14 @@ import {
   isMobile,
 } from "@/lib/tauri";
 import { CourseStatsPanel } from "@/components/course-stats-panel";
+import { OnboardingOverlay, shouldShowOnboarding } from "@/components/onboarding-overlay";
+import { ShortcutsHelp } from "@/components/shortcuts-help";
+import {
+  WhatsNewDialog,
+  shouldShowWhatsNew,
+  markWhatsNewSeen,
+} from "@/components/whats-new-dialog";
+import { saveGradesCache, loadGradesCache } from "@/lib/grades-cache";
 import { useTheme } from "@/components/theme-provider";
 import { useLocale } from "@/components/locale-provider";
 import { useToast } from "@/components/toast-provider";
@@ -304,6 +315,11 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
   const [aboutOpen, setAboutOpen] = useState(false);
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
   const [updateDialogOpen, setUpdateDialogOpen] = useState(false);
+  const [onboardingVisible, setOnboardingVisible] = useState(false);
+  const [shortcutsHelpOpen, setShortcutsHelpOpen] = useState(false);
+  const [whatsNewOpen, setWhatsNewOpen] = useState(false);
+  const [appVersion, setAppVersion] = useState("0.1.3");
+  const [isOffline, setIsOffline] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<{
     version: string;
     url: string;
@@ -320,6 +336,7 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
   });
   const [, setTick] = useState(0);
   const gradesRef = useRef<GradeRecord[]>([]);
+  const exportCsvRef = useRef<() => void>(() => {});
   const { width: windowWidth } = useWindowSize();
   const { theme, toggle: toggleTheme } = useTheme();
   const { t, locale, setLocale } = useLocale();
@@ -390,6 +407,8 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
       });
       setGrades(data);
       setLastRefreshAt(new Date());
+      setIsOffline(false);
+      saveGradesCache(data, studentInfo);
       if (!hadNew) {
         const courseCount = new Set(
           data.map((g) => courseCode(g) || courseName(g))
@@ -406,8 +425,14 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
         onLogout();
         showToast({ type: "error", title: t("sessionExpired") });
       } else {
-        console.error(e);
-        showToast({ type: "error", title: t("refreshError") });
+        const cache = loadGradesCache();
+        if (cache?.grades?.length) {
+          setGrades(cache.grades);
+          setLastRefreshAt(new Date(cache.cachedAt));
+          setIsOffline(true);
+        } else {
+          showToast({ type: "error", title: t("refreshError") });
+        }
       }
     } finally {
       setRefreshing(false);
@@ -425,6 +450,8 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
       .then((data) => {
         setGrades(data);
         setLastRefreshAt(new Date());
+        setIsOffline(false);
+        saveGradesCache(data, studentInfo);
       })
       .catch(async (e) => {
         if (isSessionExpiredError(e)) {
@@ -432,8 +459,14 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
           onLogout();
           showToast({ type: "error", title: t("sessionExpired") });
         } else {
-          console.error(e);
-          showToast({ type: "error", title: t("refreshError") });
+          const cache = loadGradesCache();
+          if (cache?.grades?.length) {
+            setGrades(cache.grades);
+            setLastRefreshAt(new Date(cache.cachedAt));
+            setIsOffline(true);
+          } else {
+            showToast({ type: "error", title: t("refreshError") });
+          }
         }
       })
       .finally(() => setLoading(false));
@@ -445,11 +478,13 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
       getBackgroundCheckMinutes(),
       getCheckForUpdatesOnStartup(),
       isMobile(),
-    ]).then(([keepInTray, bgMins, checkUpdates, mobile]) => {
+      getAppVersion(),
+    ]).then(([keepInTray, bgMins, checkUpdates, mobile, version]) => {
       setKeepInTrayState(keepInTray);
       setBackgroundCheckMinutesState(bgMins);
       setCheckForUpdatesOnStartupState(checkUpdates);
       setIsMobileDevice(mobile);
+      setAppVersion(version);
     });
   }, []);
 
@@ -496,6 +531,7 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
             setGrades(data);
             setLastRefreshAt(new Date());
             setNewCourseKeys(newKeys);
+            saveGradesCache(data, studentInfo);
             setTimeout(() => setNewCourseKeys(new Set()), 30000);
             const brandNewCourses = newIds.filter(
               (g) => !oldCourseKeys.has(courseCode(g) || courseName(g))
@@ -599,6 +635,16 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
     return t("updatedDays", { n: Math.floor(h / 24) });
   }
 
+  function formatCachedAgo(cachedAt: string): string {
+    const sec = Math.floor((Date.now() - new Date(cachedAt).getTime()) / 1000);
+    if (sec < 60) return t("updatedNow");
+    const min = Math.floor(sec / 60);
+    if (min < 60) return t("updatedMinutes", { n: min });
+    const h = Math.floor(min / 60);
+    if (h < 24) return t("updatedHours", { n: h });
+    return t("updatedDays", { n: Math.floor(h / 24) });
+  }
+
   function matchesSearch(course: CourseGroup): boolean {
     if (!searchQuery.trim()) return true;
     const q = searchQuery.toLowerCase().trim();
@@ -656,6 +702,7 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
     a.click();
     URL.revokeObjectURL(url);
   }
+  exportCsvRef.current = exportCsv;
 
   function toggleSemesterCollapse(sem: number) {
     setCollapsedSemesters((prev) => {
@@ -709,7 +756,7 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (e.key === "r" || e.key === "R") {
-        if (!refreshing) {
+        if (!e.ctrlKey && !e.metaKey && !refreshing) {
           e.preventDefault();
           handleRefresh();
         }
@@ -718,22 +765,34 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
           e.preventDefault();
           setSettingsOpen((v) => !v);
         }
+      } else if (e.key === "?") {
+        e.preventDefault();
+        setShortcutsHelpOpen((v) => !v);
+      } else if ((e.ctrlKey || e.metaKey) && e.key === "e") {
+        e.preventDefault();
+        if (!loading && grades.length > 0) exportCsvRef.current();
       } else if (e.key === "Escape") {
         setSettingsOpen(false);
         setAboutOpen(false);
         setLogoutConfirmOpen(false);
+        setUpdateDialogOpen(false);
+        setShortcutsHelpOpen(false);
+        setWhatsNewOpen(false);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [refreshing]);
+  }, [refreshing, loading, grades.length]);
 
   useEffect(() => {
     if (!refreshOnFocus) return;
     const onFocus = () => {
       checkForNewGrades(gradesRef.current, { showNotification: true }).then(
         ({ data, hadNew }) => {
-          if (hadNew) setGrades(data);
+          if (hadNew) {
+            setGrades(data);
+            saveGradesCache(data, studentInfo);
+          }
         }
       );
     };
@@ -747,6 +806,22 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
     return () => clearInterval(id);
   }, [lastRefreshAt]);
 
+  // Show onboarding once when grades first load (first-time users only)
+  useEffect(() => {
+    if (!loading && grades.length > 0 && typeof window !== "undefined" && shouldShowOnboarding()) {
+      setOnboardingVisible(true);
+    }
+  }, [loading, grades.length]);
+
+  // Show "What's new" when app version has increased since last seen
+  useEffect(() => {
+    if (appVersion && typeof window !== "undefined" && shouldShowWhatsNew(appVersion)) {
+      setWhatsNewOpen(true);
+    } else if (appVersion) {
+      markWhatsNewSeen(appVersion);
+    }
+  }, [appVersion]);
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -755,6 +830,14 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
       transition={{ duration: 0.3 }}
       className="page-bg min-h-screen bg-background overflow-x-hidden"
     >
+      {/* Skip link for keyboard/screen reader users */}
+      <a
+        href="#main-content"
+        className="skip-link"
+      >
+        {t("skipToContent")}
+      </a>
+
       {/* ── Header ─────────────────────────────────────────────── */}
       <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 pt-[env(safe-area-inset-top,0)]">
         <div className="mx-auto flex w-full max-w-5xl flex-col gap-4 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 xl:max-w-6xl 2xl:max-w-7xl min-w-0">
@@ -802,23 +885,33 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
               <TooltipContent>{t("tooltipRefresh")}</TooltipContent>
             </UITooltip>
             {/* Settings toggle */}
-            <div className="relative">
-              <UITooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setSettingsOpen((v) => !v)}
-                    aria-label={t("settings")}
-                  >
-                    <HugeiconsIcon icon={Settings01Icon} size={16} />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>{t("tooltipSettings")}</TooltipContent>
-              </UITooltip>
+            <UITooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setSettingsOpen((v) => !v)}
+                  aria-label={t("settings")}
+                >
+                  <HugeiconsIcon icon={Settings01Icon} size={16} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t("tooltipSettings")}</TooltipContent>
+            </UITooltip>
 
-            </div>
-
+            <UITooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setShortcutsHelpOpen(true)}
+                  aria-label={t("shortcutsTitle")}
+                >
+                  <HugeiconsIcon icon={HelpCircleIcon} size={16} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{t("tooltipShortcuts")}</TooltipContent>
+            </UITooltip>
             <UITooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -849,7 +942,25 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
         </div>
       </header>
 
-        <main className="mx-auto w-full max-w-5xl min-w-0 px-4 py-8 space-y-8 sm:px-6 xl:max-w-6xl 2xl:max-w-7xl pb-[max(2rem,env(safe-area-inset-bottom))]">
+        <main id="main-content" className="mx-auto w-full max-w-5xl min-w-0 px-4 py-8 space-y-8 sm:px-6 xl:max-w-6xl 2xl:max-w-7xl pb-[max(2rem,env(safe-area-inset-bottom))]" tabIndex={-1}>
+        {/* ── Offline banner ─────────────────────────────────── */}
+        {isOffline && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="rounded-xl border border-amber-200 bg-amber-500/10 dark:border-amber-800/50 dark:bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200"
+          >
+            <p>
+              {t("offlineBanner")}{" "}
+              {loadGradesCache() && (
+                <span className="text-amber-700 dark:text-amber-300">
+                  ({t("offlineCachedAt", { ago: formatCachedAgo(loadGradesCache()!.cachedAt) })})
+                </span>
+              )}
+            </p>
+          </motion.div>
+        )}
+
         {/* ── Summary cards (equal height) ────────────────────── */}
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
           {[
@@ -929,13 +1040,25 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
         {/* ── Toolbar: search, filter, sort, export, last updated ─── */}
         {!loading && grades.length > 0 && (
           <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex flex-1 flex-col gap-3 sm:flex-row sm:items-center">
-              <Input
-                placeholder={t("searchPlaceholder")}
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="max-w-xs"
-              />
+            <div className="flex flex-1 flex-col gap-3 sm:flex-row sm:items-center sm:flex-wrap">
+              <div className="relative max-w-xs">
+                <Input
+                  placeholder={t("searchPlaceholder")}
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pr-9"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery("")}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                    aria-label={t("cancel")}
+                  >
+                    <HugeiconsIcon icon={Cancel01Icon} size={14} />
+                  </button>
+                )}
+              </div>
               <div className="flex flex-wrap gap-2">
                 {(["all", "passed", "failed"] as const).map((f) => (
                   <UITooltip key={f}>
@@ -978,7 +1101,10 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
                 <TooltipContent>{t("tooltipSortBy")}</TooltipContent>
               </UITooltip>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
+              <span className="text-xs text-muted-foreground hidden sm:inline" title={t("shortcutHint")}>
+                {t("shortcutHint")}
+              </span>
               <span className="text-xs text-muted-foreground">{formatLastUpdated()}</span>
               <UITooltip>
                 <TooltipTrigger asChild>
@@ -1069,19 +1195,23 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="flex flex-col items-center justify-center py-16 gap-4"
+            className="space-y-8"
           >
-            <div className="h-8 w-8 rounded-full border-2 border-primary/30 border-t-primary animate-spin" />
-            <p className="text-sm text-muted-foreground">{t("loadingGrades")}</p>
-            <div className="flex gap-1">
-              {[0, 1, 2].map((i) => (
-                <motion.div
-                  key={i}
-                  className="h-1.5 w-1.5 rounded-full bg-primary/40"
-                  animate={{ opacity: [0.4, 1, 0.4] }}
-                  transition={{ duration: 1.2, repeat: Infinity, delay: i * 0.2 }}
-                />
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+              {[1, 2, 3, 4].map((i) => (
+                <Card key={i} className="overflow-hidden border-0 shadow-md shadow-black/5 dark:shadow-black/15 ring-1 ring-border/50">
+                  <CardHeader className="pb-2 pt-5">
+                    <div className="h-4 w-24 rounded bg-muted animate-pulse" />
+                  </CardHeader>
+                  <CardContent className="pb-5">
+                    <div className="h-9 w-16 rounded bg-muted animate-pulse" />
+                  </CardContent>
+                </Card>
               ))}
+            </div>
+            <div className="flex flex-col items-center justify-center py-12 gap-3">
+              <div className="h-6 w-6 rounded-full border-2 border-primary/30 border-t-primary animate-spin" />
+              <p className="text-sm text-muted-foreground">{t("loadingGrades")}</p>
             </div>
           </motion.div>
         ) : grades.length === 0 ? (
@@ -1143,9 +1273,18 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
                           <span className="text-right">{t("ects")}</span>
                         </div>
                         <div className="divide-y">
-                          {sortCourses(
-                            section.courses.filter(matchesSearch).filter(matchesFilter)
-                          ).map((course) => {
+                          {(() => {
+                            const filtered = sortCourses(
+                              section.courses.filter(matchesSearch).filter(matchesFilter)
+                            );
+                            if (filtered.length === 0) {
+                              return (
+                                <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+                                  {t("noCoursesMatch")}
+                                </div>
+                              );
+                            }
+                            return filtered.map((course) => {
                       const hasHistory = course.attempts.length > 1;
                       const isOpen = expanded.has(course.key);
                       const isNew = newCourseKeys.has(course.key);
@@ -1309,7 +1448,8 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
                           </AnimatePresence>
                         </div>
                       );
-                          })}
+                            });
+                          })()}
                         </div>
                       </Card>
                     </motion.div>
@@ -1338,7 +1478,7 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
               >
               <h3 className="text-lg font-semibold">{t("aboutTitle")}</h3>
               <p className="mt-2 text-sm text-muted-foreground">
-                {t("aboutVersion", { version: "0.1.2" })}
+                {t("aboutVersion", { version: appVersion })}
               </p>
               <p className="mt-3 text-sm text-muted-foreground">
                 {t("aboutPrivacy")}
@@ -1388,7 +1528,10 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
                 className="w-full max-w-md rounded-xl border bg-popover p-6 shadow-xl ring-1 ring-border/50 my-auto"
               >
                 <h3 className="text-lg font-semibold mb-4">{t("settings")}</h3>
-                <div className="space-y-4">
+                <div className="space-y-6">
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-3">{t("settingsGeneral")}</p>
+                    <div className="space-y-4">
                   <div className="flex items-center justify-between gap-4">
                     <span className="text-sm font-medium text-muted-foreground">
                       {t("language")}
@@ -1444,6 +1587,18 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
                       />
                     </div>
                   )}
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-sm">{t("refreshOnFocus")}</span>
+                    <Switch
+                      checked={refreshOnFocus}
+                      onCheckedChange={handleRefreshOnFocusChange}
+                    />
+                  </div>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-3">{t("settingsBackground")}</p>
+                    <div className="space-y-4">
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                     <span className="text-sm font-medium text-muted-foreground">
                       {t("backgroundCheck")}
@@ -1466,13 +1621,11 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="flex items-center justify-between gap-4">
-                    <span className="text-sm">{t("refreshOnFocus")}</span>
-                    <Switch
-                      checked={refreshOnFocus}
-                      onCheckedChange={handleRefreshOnFocusChange}
-                    />
+                    </div>
                   </div>
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground mb-3">{t("settingsUpdates")}</p>
+                    <div className="space-y-4">
                   <div className="flex items-center justify-between gap-4">
                     <span className="text-sm">
                       {t("checkForUpdatesOnStartup")}
@@ -1494,6 +1647,8 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
                         ? t("checkingForUpdates")
                         : t("checkForUpdatesButton")}
                     </Button>
+                  </div>
+                    </div>
                   </div>
                 </div>
                 <div className="mt-6 flex justify-end">
@@ -1606,6 +1761,23 @@ export function Dashboard({ studentInfo, onLogout }: DashboardProps) {
         )}
       </AnimatePresence>
 
+      <OnboardingOverlay
+        visible={onboardingVisible}
+        onComplete={() => setOnboardingVisible(false)}
+        hasGrades={!loading && grades.length > 0}
+      />
+      <ShortcutsHelp
+        open={shortcutsHelpOpen}
+        onClose={() => setShortcutsHelpOpen(false)}
+      />
+      <WhatsNewDialog
+        open={whatsNewOpen}
+        version={appVersion}
+        onClose={() => {
+          setWhatsNewOpen(false);
+          markWhatsNewSeen(appVersion);
+        }}
+      />
     </motion.div>
   );
 }
